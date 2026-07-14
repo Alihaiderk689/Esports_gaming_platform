@@ -1,0 +1,9 @@
+django
+djangorestframework
+djangorestframework-simplejwt
+django-cors-headers
+django-environ
+psycopg[binary]
+bcrypt
+google-auth
+requests

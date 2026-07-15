@@ -17,4 +17,11 @@ urlpatterns = [
     path('auth/resend-verification/', views.ResendVerificationView.as_view()),
     path('auth/me/', views.ProfileView.as_view()),
     path('auth/change-password/', views.ChangePasswordView.as_view()),
+
+    path('players/', views.PlayerListView.as_view()),
+    path('players/top/', views.PlayerTopView.as_view()),
+    path('players/following/', views.PlayerFollowingView.as_view()),
+    path('players/me/', views.PlayerMeView.as_view()),
+    path('players/<int:pk>/', views.PlayerDetailView.as_view()),
+    path('players/<int:pk>/follow/', views.PlayerFollowView.as_view()),
 ]

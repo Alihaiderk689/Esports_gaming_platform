@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from core.models import User
+from core.models import Follow, User
 
 
 @admin.register(User)
@@ -29,3 +29,9 @@ class UserAdmin(BaseUserAdmin):
             'fields': ('email', 'password1', 'password2'),
         }),
     )
+
+
+@admin.register(Follow)
+class FollowAdmin(admin.ModelAdmin):
+    list_display = ['follower', 'following', 'created_at']
+    search_fields = ['follower__email', 'following__email']

@@ -46,3 +46,18 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+
+class Follow(models.Model):
+    follower = models.ForeignKey(User, related_name='following', on_delete=models.CASCADE)
+    following = models.ForeignKey(User, related_name='followers', on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['follower', 'following'], name='unique_follow'),
+            models.CheckConstraint(check=~models.Q(follower=models.F('following')), name='no_self_follow'),
+        ]
+
+    def __str__(self):
+        return f'{self.follower_id} -> {self.following_id}'

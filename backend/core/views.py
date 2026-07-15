@@ -1,10 +1,12 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db.models import Count
+from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
-from rest_framework import generics, permissions, status
+from rest_framework import filters, generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -14,12 +16,15 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from core.emails import send_password_reset_email, send_verification_email
+from core.models import Follow
 from core.serializers import (
     ChangePasswordSerializer,
     ForgotPasswordSerializer,
     GoogleLoginSerializer,
     LoginSerializer,
     LogoutSerializer,
+    PlayerSerializer,
+    PlayerUpdateSerializer,
     ProfileSerializer,
     RegisterSerializer,
     ResendVerificationSerializer,
@@ -29,6 +34,13 @@ from core.serializers import (
 from core.tokens import email_verification_token, password_reset_token
 
 User = get_user_model()
+
+
+def _players_queryset():
+    return User.objects.annotate(
+        followers_count=Count('followers', distinct=True),
+        following_count=Count('following', distinct=True),
+    )
 
 
 @api_view(['GET'])
@@ -213,3 +225,78 @@ class ChangePasswordView(APIView):
         user.set_password(data['new_password'])
         user.save(update_fields=['password'])
         return Response({'detail': 'Password changed successfully.'})
+
+
+class IsAdminOrReadOnly(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return bool(request.user and request.user.is_staff)
+
+
+class PlayerListView(generics.ListAPIView):
+    serializer_class = PlayerSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = _players_queryset().order_by('-date_joined')
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['email', 'first_name', 'last_name']
+
+
+class PlayerDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Read access for any authenticated player; writes are admin-only (self-service lives at /players/me/)."""
+    queryset = _players_queryset()
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrReadOnly]
+
+    def get_serializer_class(self):
+        if self.request.method in ('PATCH', 'PUT'):
+            return PlayerUpdateSerializer
+        return PlayerSerializer
+
+
+class PlayerMeView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        return _players_queryset().get(pk=self.request.user.pk)
+
+    def get_serializer_class(self):
+        if self.request.method in ('PATCH', 'PUT'):
+            return PlayerUpdateSerializer
+        return PlayerSerializer
+
+
+class PlayerTopView(generics.ListAPIView):
+    serializer_class = PlayerSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = _players_queryset().order_by('-followers_count', '-date_joined')
+
+
+class PlayerFollowingView(generics.ListAPIView):
+    serializer_class = PlayerSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        following_ids = Follow.objects.filter(follower=self.request.user).values_list('following_id', flat=True)
+        return _players_queryset().filter(pk__in=following_ids).order_by('-date_joined')
+
+
+class PlayerFollowView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        if pk == request.user.pk:
+            raise ValidationError({'detail': 'You cannot follow yourself.'})
+        target = get_object_or_404(User, pk=pk)
+
+        _, created = Follow.objects.get_or_create(follower=request.user, following=target)
+        if not created:
+            raise ValidationError({'detail': 'You are already following this player.'})
+        return Response({'detail': 'Player followed.'}, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, pk):
+        target = get_object_or_404(User, pk=pk)
+
+        deleted, _ = Follow.objects.filter(follower=request.user, following=target).delete()
+        if not deleted:
+            raise ValidationError({'detail': 'You are not following this player.'})
+        return Response(status=status.HTTP_204_NO_CONTENT)

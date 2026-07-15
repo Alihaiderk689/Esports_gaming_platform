@@ -7,3 +7,4 @@ psycopg[binary]
 bcrypt
 google-auth
 requests
+anthropic

@@ -39,6 +39,8 @@ FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:5173')
 
 GOOGLE_CLIENT_ID = env('GOOGLE_CLIENT_ID', default='')
 
+ANTHROPIC_API_KEY = env('ANTHROPIC_API_KEY', default='')
+
 EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
 EMAIL_HOST = env('EMAIL_HOST', default='')
 EMAIL_PORT = env.int('EMAIL_PORT', default=587)
@@ -62,6 +64,14 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'core',
+    'games',
+    'organizer',
+    'tourny_regist',
+    'brackets',
+    'partners',
+    'notifications',
+    'dashboard',
+    'rag_chat',
 ]
 
 REST_FRAMEWORK = {
@@ -198,6 +208,9 @@ SIMPLE_JWT = {
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = 'static/'
+
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field

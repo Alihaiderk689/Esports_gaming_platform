@@ -3,6 +3,8 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from core.models import Follow
+
 User = get_user_model()
 
 
@@ -76,3 +78,29 @@ class ResendVerificationSerializer(serializers.Serializer):
 class ChangePasswordSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True, validators=[validate_password])
+
+
+class PlayerSerializer(serializers.ModelSerializer):
+    followers_count = serializers.IntegerField(read_only=True)
+    following_count = serializers.IntegerField(read_only=True)
+    is_following = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'first_name', 'last_name', 'date_joined',
+            'followers_count', 'following_count', 'is_following',
+        ]
+        read_only_fields = fields
+
+    def get_is_following(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated or request.user.pk == obj.pk:
+            return False
+        return Follow.objects.filter(follower=request.user, following=obj).exists()
+
+
+class PlayerUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name']

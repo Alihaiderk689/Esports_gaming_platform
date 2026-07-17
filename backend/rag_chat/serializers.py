@@ -1,29 +1,80 @@
 from rest_framework import serializers
 
-from rag_chat.models import ChatMessage, Rule
+from rag_chat.models import RuleBook, ChatHistory
 
 
-class RuleSerializer(serializers.ModelSerializer):
-    uploaded_by_email = serializers.EmailField(source='uploaded_by.email', read_only=True)
+# ==========================
+# RuleBook Serializers
+# ==========================
+
+
+class RuleBookSerializer(serializers.ModelSerializer):
 
     class Meta:
-        model = Rule
-        fields = ['id', 'title', 'content', 'uploaded_by', 'uploaded_by_email', 'created_at']
-        read_only_fields = ['id', 'uploaded_by', 'uploaded_by_email', 'created_at']
+        model = RuleBook
+
+        fields = [
+            "id",
+            "game",
+            "title",
+            "pdf_url",
+            "public_id",
+            "uploaded_by",
+            "is_processed",
+            "uploaded_at",
+        ]
+
+        read_only_fields = [
+            "uploaded_by",
+            "is_processed",
+            "uploaded_at",
+        ]
 
 
-class RuleUploadSerializer(serializers.ModelSerializer):
+class RuleBookUploadSerializer(serializers.ModelSerializer):
+
+    pdf = serializers.FileField(
+        write_only=True
+    )
+
     class Meta:
-        model = Rule
-        fields = ['title', 'content']
+        model = RuleBook
+
+        fields = [
+            "game",
+            "title",
+            "pdf",
+        ]
 
 
-class ChatMessageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ChatMessage
-        fields = ['id', 'role', 'content', 'created_at']
-        read_only_fields = fields
+# ==========================
+# Chat Serializers
+# ==========================
 
 
 class ChatRequestSerializer(serializers.Serializer):
-    message = serializers.CharField(max_length=4000)
+
+    message = serializers.CharField(
+        required=True,
+        allow_blank=False
+    )
+
+
+class ChatHistorySerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ChatHistory
+
+        fields = [
+            "id",
+            "user",
+            "document",
+            "question",
+            "answer",
+            "created_at",
+        ]
+
+        read_only_fields = [
+            "user",
+            "created_at",
+        ]

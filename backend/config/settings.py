@@ -10,8 +10,20 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import warnings
+
+# Cosmetic warnings from third-party packages that show up on every manage.py
+# command (not just ask) because importing cloudinary/google-auth here (and
+# via every INSTALLED_APPS module Django loads) triggers them before any
+# command runs. Must come before those imports below, not after.
+warnings.filterwarnings('ignore', message=r'urllib3 v2 only supports OpenSSL.*')
+warnings.filterwarnings('ignore', category=FutureWarning, module=r'google(\.|$)')
+
+import os
 from datetime import timedelta
 from pathlib import Path
+import cloudinary
+from dotenv import load_dotenv
 
 import environ
 
@@ -48,6 +60,26 @@ EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@example.com')
+
+
+
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure=True,
+)
+
+
+load_dotenv()
+
+GROQ_API_KEY = os.getenv(
+    "GROQ_API_KEY"
+)
+
+
+
+
 
 
 # Application definition
@@ -204,6 +236,23 @@ SIMPLE_JWT = {
 
     'SIGNING_KEY': env('JWT_SECRET_KEY'),
 }
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'rag_chat': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 

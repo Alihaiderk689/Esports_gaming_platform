@@ -1,34 +1,73 @@
-from django.conf import settings
 from django.db import models
+from django.conf import settings
+
+from games.models import Game
 
 
-class Rule(models.Model):
-    title = models.CharField(max_length=200)
-    content = models.TextField()
-    uploaded_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, related_name='uploaded_rules', on_delete=models.CASCADE,
+class RuleBook(models.Model):
+
+    game = models.ForeignKey(
+        Game,
+        on_delete=models.CASCADE,
+        related_name="rulebooks"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        ordering = ['-created_at']
+    title = models.CharField(
+        max_length=255
+    )
+
+    pdf_url = models.URLField()
+
+    public_id = models.CharField(
+        max_length=255,
+        unique=True
+    )
+
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="uploaded_rulebooks"
+    )
+
+    is_processed = models.BooleanField(
+        default=False
+    )
+
+    uploaded_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
 
     def __str__(self):
         return self.title
 
 
-class ChatMessage(models.Model):
-    class Role(models.TextChoices):
-        USER = 'user', 'User'
-        ASSISTANT = 'assistant', 'Assistant'
 
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name='chat_messages', on_delete=models.CASCADE)
-    role = models.CharField(max_length=10, choices=Role.choices)
-    content = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
+class ChatHistory(models.Model):
 
-    class Meta:
-        ordering = ['created_at']
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chat_history"
+    )
+
+    document = models.ForeignKey(
+        RuleBook,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="chats"
+    )
+
+    question = models.TextField()
+
+    answer = models.TextField()
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
 
     def __str__(self):
-        return f'{self.role}: {self.content[:50]}'
+        return f"{self.user} - {self.question[:30]}"

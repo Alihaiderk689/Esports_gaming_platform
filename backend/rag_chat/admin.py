@@ -1,16 +1,24 @@
 from django.contrib import admin
 
-from rag_chat.models import ChatMessage, Rule
+from .models import RuleBook, ChatHistory
 
 
-@admin.register(Rule)
-class RuleAdmin(admin.ModelAdmin):
-    list_display = ['title', 'uploaded_by', 'created_at']
-    search_fields = ['title', 'content']
+@admin.register(RuleBook)
+class RuleBookAdmin(admin.ModelAdmin):
+
+    list_display = (
+        "title",
+        "game",
+        "is_processed",
+        "uploaded_at"
+    )
 
 
-@admin.register(ChatMessage)
-class ChatMessageAdmin(admin.ModelAdmin):
-    list_display = ['user', 'role', 'created_at']
-    list_filter = ['role']
-    search_fields = ['user__email', 'content']
+@admin.register(ChatHistory)
+class ChatHistoryAdmin(admin.ModelAdmin):
+
+    list_display = (
+        "user",
+        "question",
+        "created_at"
+    )

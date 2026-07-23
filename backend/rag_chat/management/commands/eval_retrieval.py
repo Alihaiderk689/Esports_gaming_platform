@@ -18,7 +18,7 @@ EVAL_CASES = [
     ("What does PUBG stand for?", "PlayerUnknown's Battlegrounds", "pubg_full_name"),
 ]
 
-TOP_K = 8
+TOP_K = 12
 
 
 class Command(BaseCommand):

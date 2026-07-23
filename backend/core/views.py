@@ -18,6 +18,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from core.emails import send_password_reset_email, send_verification_email
 from core.models import Follow
 from core.serializers import (
+    AdminUserSerializer,
+    AdminUserUpdateSerializer,
     ChangePasswordSerializer,
     ForgotPasswordSerializer,
     GoogleLoginSerializer,
@@ -37,7 +39,7 @@ User = get_user_model()
 
 
 def _players_queryset():
-    return User.objects.annotate(
+    return User.objects.filter(is_active=True).annotate(
         followers_count=Count('followers', distinct=True),
         following_count=Count('following', distinct=True),
     )
@@ -300,3 +302,30 @@ class PlayerFollowView(APIView):
         if not deleted:
             raise ValidationError({'detail': 'You are not following this player.'})
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminUserListView(generics.ListAPIView):
+    serializer_class = AdminUserSerializer
+    permission_classes = [permissions.IsAdminUser]
+    queryset = User.objects.select_related('organizer_profile').order_by('-date_joined')
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['email', 'first_name', 'last_name']
+
+
+class AdminUserDetailView(generics.RetrieveUpdateAPIView):
+    queryset = User.objects.select_related('organizer_profile')
+    permission_classes = [permissions.IsAdminUser]
+
+    def get_serializer_class(self):
+        if self.request.method in ('PATCH', 'PUT'):
+            return AdminUserUpdateSerializer
+        return AdminUserSerializer
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.pk == request.user.pk and (
+            request.data.get('is_active') is False or request.data.get('is_staff') is False
+        ):
+            raise ValidationError({'detail': 'You cannot remove your own admin access or deactivate yourself.'})
+        super().update(request, *args, **kwargs)
+        return Response(AdminUserSerializer(self.get_object()).data)

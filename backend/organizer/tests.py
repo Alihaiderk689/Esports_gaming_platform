@@ -37,6 +37,7 @@ class OrganizerApiTests(APITestCase):
     def test_register(self):
         resp = self.client.post('/api/organizer/register/', {
             'company_name': 'Acme Esports', 'phone_number': '03001234567', 'address': 'Lahore',
+            'payout_method': 'jazzcash', 'jazzcash_number': '03001234567',
         })
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         self.assertEqual(resp.data['company_name'], 'Acme Esports')
@@ -46,6 +47,20 @@ class OrganizerApiTests(APITestCase):
     def test_register_missing_company_name_rejected(self):
         resp = self.client.post('/api/organizer/register/', {})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_register_missing_payout_details_rejected(self):
+        resp = self.client.post('/api/organizer/register/', {'company_name': 'Acme Esports'})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('payout_method', resp.data)
+
+    def test_register_bank_payout_requires_bank_details(self):
+        resp = self.client.post('/api/organizer/register/', {
+            'company_name': 'Acme Esports', 'payout_method': 'bank',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('bank_name', resp.data)
+        self.assertIn('bank_account_title', resp.data)
+        self.assertIn('bank_account_number', resp.data)
 
     def test_register_twice_rejected(self):
         Organizer.objects.create(user=self.user, company_name='Acme')

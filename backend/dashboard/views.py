@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from brackets.models import Match
+from brackets.serializers import display_name
 from core.models import Follow
 from games.models import Game
-from notifications.models import Notification
 from organizer.models import Organizer
 from partners.models import Partner
 from tourny_regist.models import Registration, Tournament
@@ -40,14 +40,14 @@ class PlayerDashboardView(APIView):
             'following_count': Follow.objects.filter(follower=user).count(),
             'registrations_count': registrations.count(),
             'upcoming_tournaments_count': upcoming_registrations.count(),
-            'unread_notifications_count': Notification.objects.filter(recipient=user, is_read=False).count(),
             'upcoming_matches': [
                 {
                     'id': match.pk,
                     'tournament': match.tournament.name,
                     'round_number': match.round_number,
                     'opponent_email': (
-                        match.player2.email if match.player1_id == user.pk else match.player1.email
+                        display_name(match.player2, match.tournament) if match.player1_id == user.pk
+                        else display_name(match.player1, match.tournament)
                     ),
                 }
                 for match in upcoming_matches
@@ -74,6 +74,10 @@ class OrganizerDashboardView(APIView):
                 'status': organizer.status,
             },
             'tournaments_count': tournaments.count(),
+            'pending_tournaments_count': tournaments.filter(status=Tournament.Status.PENDING).count(),
+            'completed_tournaments_count': tournaments.filter(
+                status=Tournament.Status.APPROVED, ends_at__isnull=False, ends_at__lt=timezone.now(),
+            ).count(),
             'active_tournaments_count': tournaments.filter(is_registration_open=True).count(),
             'total_registrations': Registration.objects.filter(tournament_id__in=tournament_ids).count(),
             'matches_awaiting_result': Match.objects.filter(
@@ -97,7 +101,7 @@ class AdminDashboardView(APIView):
 
     def get(self, request):
         return Response({
-            'total_users': User.objects.count(),
+            'total_users': User.objects.filter(is_active=True).count(),
             'total_organizers': Organizer.objects.count(),
             'organizers_by_status': {
                 choice_value: Organizer.objects.filter(status=choice_value).count()
@@ -111,11 +115,11 @@ class AdminDashboardView(APIView):
 
 
 class PlatformStatsView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         return Response({
-            'total_players': User.objects.count(),
+            'total_players': User.objects.filter(is_active=True).count(),
             'total_organizers': Organizer.objects.filter(status=Organizer.Status.APPROVED).count(),
             'total_games': Game.objects.filter(is_active=True).count(),
             'total_tournaments': Tournament.objects.count(),

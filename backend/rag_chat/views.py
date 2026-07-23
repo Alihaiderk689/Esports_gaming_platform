@@ -172,15 +172,17 @@ class ChatView(APIView):
 
         try:
 
-            candidate_chunks, detected_game = retrieve_candidates(question)
-            retrieved_chunks = rerank(question, candidate_chunks, top_k=8)
-            context = build_context(retrieved_chunks)
-
             recent_history = list(
                 ChatHistory.objects.filter(user=request.user).order_by("-created_at")[:_HISTORY_TURNS]
             )
             recent_history.reverse()
             history_payload = [{"question": h.question, "answer": h.answer} for h in recent_history]
+
+            previous_game = recent_history[-1].game_name if recent_history else None
+
+            candidate_chunks, detected_game = retrieve_candidates(question, fallback_game=previous_game)
+            retrieved_chunks = rerank(question, candidate_chunks, top_k=12)
+            context = build_context(retrieved_chunks)
 
             answer = generate_answer(question, context, history=history_payload)
 
@@ -203,7 +205,9 @@ class ChatView(APIView):
 
             question=question,
 
-            answer=answer
+            answer=answer,
+
+            game_name=detected_game or "",
 
         )
 

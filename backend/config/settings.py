@@ -101,7 +101,6 @@ INSTALLED_APPS = [
     'tourny_regist',
     'brackets',
     'partners',
-    'notifications',
     'dashboard',
     'rag_chat',
 ]
@@ -135,6 +134,7 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ORIGINS', default=['http://localhost:5173'])
+CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=['http://localhost:5173'])
 

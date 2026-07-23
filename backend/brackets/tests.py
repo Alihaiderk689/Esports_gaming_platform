@@ -29,7 +29,7 @@ class BracketApiTests(APITestCase):
 
     def _register(self, tournament, players):
         for player in players:
-            Registration.objects.create(tournament=tournament, player=player)
+            Registration.objects.create(tournament=tournament, player=player, checked_in=True)
 
     def test_generate_requires_auth(self):
         self.client.force_authenticate(user=None)
@@ -93,6 +93,37 @@ class BracketApiTests(APITestCase):
         self.assertEqual(len(round2), 1)
         self.assertTrue(round2[0]['player1'] is not None or round2[0]['player2'] is not None)
         self.assertEqual(round2[0]['status'], 'pending')
+
+    def test_generate_with_multiple_byes_seeds_top_players_and_leaves_no_empty_match(self):
+        # 5 players -> bracket_size 8 -> 3 byes. Regression test: the previous
+        # implementation padded byes at the end of the list rather than seeding them
+        # properly, which could produce a match with *both* slots empty when more
+        # than one bye was needed.
+        extra_players = [
+            User.objects.create_user(email=f'extra-player{i}@example.com', password='StrongPass123')
+            for i in range(2)
+        ]
+        five_players = self.players[:3] + extra_players
+        self._register(self.tournament, five_players)
+
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/brackets/')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+
+        round1 = resp.data['rounds'][0]['matches']
+        self.assertEqual(len(round1), 4)
+        for match in round1:
+            self.assertTrue(match['player1'] is not None or match['player2'] is not None)
+
+        completed = [m for m in round1 if m['status'] == 'completed']
+        ready = [m for m in round1 if m['status'] == 'ready']
+        self.assertEqual(len(completed), 3)
+        self.assertEqual(len(ready), 1)
+
+        # The 3 byes should go to the top 3 seeds (first 3 registered) — the 2
+        # latest registrants should be the ones actually playing a round-1 match.
+        top_seed_ids = {p.pk for p in five_players[:3]}
+        bye_winner_ids = {m['winner'] for m in completed}
+        self.assertEqual(bye_winner_ids, top_seed_ids)
 
     def test_get_bracket_before_generation_404(self):
         resp = self.client.get(f'/api/tournaments/{self.tournament.pk}/brackets/')

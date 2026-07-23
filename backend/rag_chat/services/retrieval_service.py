@@ -20,15 +20,20 @@ def _extract_keywords(question, limit=3):
     return keywords[:limit]
 
 
-def retrieve_candidates(question, n_vector=20, n_keyword=5):
-    """Returns (candidate_chunk_texts, detected_game_name).
+def retrieve_candidates(question, n_vector=20, n_keyword=5, fallback_game=None):
+    """Returns (candidate_chunk_texts, effective_game_name).
 
     Vector search and each keyword variant are independent Chroma Cloud
     network calls - run them concurrently instead of sequentially, since
     each round trip costs ~200-250ms and doing 5-7 of them one after another
     was adding roughly a second of pure network wait to every question.
+
+    fallback_game carries the game from the previous conversation turn.
+    Follow-ups often don't name a game at all ("what about substitutes?"),
+    so without this the search runs unscoped across every game instead of
+    staying on-topic.
     """
-    game_name = detect_game(question)
+    game_name = detect_game(question) or fallback_game
     query_embedding = generate_embeddings([question])[0]
 
     keywords = _extract_keywords(question)

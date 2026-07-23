@@ -66,6 +66,16 @@ class OrganizerStatusView(APIView):
         return Response(OrganizerStatusSerializer(organizer).data)
 
 
+class OrganizerAcknowledgeStatusView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        organizer = _get_organizer(request.user)
+        organizer.last_seen_status = organizer.status
+        organizer.save(update_fields=['last_seen_status'])
+        return Response(OrganizerStatusSerializer(organizer).data)
+
+
 class OrganizerProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -109,4 +119,4 @@ class AdminOrganizerDetailView(generics.RetrieveUpdateAPIView):
 
     def update(self, request, *args, **kwargs):
         super().update(request, *args, **kwargs)
-        return Response(AdminOrganizerSerializer(self.get_object()).data)
+        return Response(AdminOrganizerSerializer(self.get_object(), context={'request': request}).data)

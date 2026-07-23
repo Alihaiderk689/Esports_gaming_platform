@@ -8,6 +8,10 @@ class Organizer(models.Model):
         APPROVED = 'approved', 'Approved'
         REJECTED = 'rejected', 'Rejected'
 
+    class PayoutMethod(models.TextChoices):
+        JAZZCASH = 'jazzcash', 'JazzCash'
+        BANK = 'bank', 'Bank Account'
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, related_name='organizer_profile', on_delete=models.CASCADE,
     )
@@ -20,8 +24,15 @@ class Organizer(models.Model):
     cnic_document = models.FileField(upload_to='organizer/cnic/%Y/%m/', blank=True, null=True)
     company_document = models.FileField(upload_to='organizer/company/%Y/%m/', blank=True, null=True)
 
+    payout_method = models.CharField(max_length=10, choices=PayoutMethod.choices, blank=True)
+    jazzcash_number = models.CharField(max_length=30, blank=True)
+    bank_name = models.CharField(max_length=150, blank=True)
+    bank_account_title = models.CharField(max_length=150, blank=True)
+    bank_account_number = models.CharField(max_length=50, blank=True)
+
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     rejection_reason = models.TextField(blank=True)
+    last_seen_status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -51,9 +51,11 @@ class ProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name',
-            'is_email_verified', 'date_joined',
+            'is_email_verified', 'is_staff', 'is_superuser', 'date_joined',
         ]
-        read_only_fields = ['id', 'email', 'is_email_verified', 'date_joined']
+        read_only_fields = [
+            'id', 'email', 'is_email_verified', 'is_staff', 'is_superuser', 'date_joined',
+        ]
 
 
 class ForgotPasswordSerializer(serializers.Serializer):
@@ -104,3 +106,42 @@ class PlayerUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['first_name', 'last_name']
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    signed_up_with_google = serializers.SerializerMethodField()
+    is_organizer = serializers.SerializerMethodField()
+    organizer_status = serializers.SerializerMethodField()
+    organizer_company_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'first_name', 'last_name', 'is_active', 'is_staff',
+            'is_superuser', 'is_email_verified', 'date_joined', 'last_login',
+            'signed_up_with_google', 'is_organizer', 'organizer_status', 'organizer_company_name',
+        ]
+        read_only_fields = [
+            'id', 'email', 'first_name', 'last_name', 'is_superuser',
+            'is_email_verified', 'date_joined', 'last_login',
+        ]
+
+    def get_signed_up_with_google(self, obj):
+        return bool(obj.google_id)
+
+    def get_is_organizer(self, obj):
+        return getattr(obj, 'organizer_profile', None) is not None
+
+    def get_organizer_status(self, obj):
+        organizer = getattr(obj, 'organizer_profile', None)
+        return organizer.status if organizer else None
+
+    def get_organizer_company_name(self, obj):
+        organizer = getattr(obj, 'organizer_profile', None)
+        return organizer.company_name if organizer else None
+
+
+class AdminUserUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['is_active', 'is_staff']

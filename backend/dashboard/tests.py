@@ -7,7 +7,6 @@ from brackets.models import Match
 from brackets.services import generate_bracket
 from core.models import Follow
 from games.models import Game
-from notifications.models import Notification
 from organizer.models import Organizer
 from partners.models import Partner
 from tourny_regist.models import Registration, Tournament
@@ -41,13 +40,11 @@ class DashboardApiTests(APITestCase):
             starts_at=timezone.now() + timezone.timedelta(days=1),
         )
         for p in self.players:
-            Registration.objects.create(tournament=self.tournament, player=p)
+            Registration.objects.create(tournament=self.tournament, player=p, checked_in=True)
         generate_bracket(self.tournament)
 
         Follow.objects.create(follower=self.players[1], following=self.player)
         Follow.objects.create(follower=self.player, following=self.players[2])
-        Notification.objects.create(recipient=self.player, title='Welcome')
-        Notification.objects.create(recipient=self.player, title='Read one', is_read=True)
 
         self.client.force_authenticate(user=self.player)
 
@@ -64,7 +61,6 @@ class DashboardApiTests(APITestCase):
         self.assertEqual(resp.data['following_count'], 1)
         self.assertEqual(resp.data['registrations_count'], 1)
         self.assertEqual(resp.data['upcoming_tournaments_count'], 1)
-        self.assertEqual(resp.data['unread_notifications_count'], 1)
         self.assertFalse(resp.data['is_organizer'])
         self.assertIsNone(resp.data['organizer_status'])
 

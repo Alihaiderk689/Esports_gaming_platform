@@ -64,6 +64,17 @@ class ChatHistory(models.Model):
 
     answer = models.TextField()
 
+    # The game this turn was actually answered about - either detected
+    # directly from the question, or carried forward from the previous turn
+    # when the question didn't name a game itself (e.g. "what about
+    # substitutes?" after asking about Valorant's roster size). Lets the next
+    # follow-up in the conversation resolve its own game the same way.
+    game_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+    )
+
     created_at = models.DateTimeField(
         auto_now_add=True
     )

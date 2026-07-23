@@ -3,10 +3,34 @@ from rest_framework import serializers
 from organizer.models import Organizer
 
 
+PAYOUT_FIELDS = ['payout_method', 'jazzcash_number', 'bank_name', 'bank_account_title', 'bank_account_number']
+
+
+def validate_payout_fields(attrs, *, require_method=True):
+    method = attrs.get('payout_method')
+    errors = {}
+
+    if require_method and not method:
+        errors['payout_method'] = 'Select how you\'d like to receive payouts.'
+    elif method == Organizer.PayoutMethod.JAZZCASH and not attrs.get('jazzcash_number'):
+        errors['jazzcash_number'] = 'This field is required for JazzCash payouts.'
+    elif method == Organizer.PayoutMethod.BANK:
+        for field in ('bank_name', 'bank_account_title', 'bank_account_number'):
+            if not attrs.get(field):
+                errors[field] = 'This field is required for bank account payouts.'
+
+    if errors:
+        raise serializers.ValidationError(errors)
+    return attrs
+
+
 class OrganizerRegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organizer
-        fields = ['company_name', 'phone_number', 'address']
+        fields = ['company_name', 'phone_number', 'address'] + PAYOUT_FIELDS
+
+    def validate(self, attrs):
+        return validate_payout_fields(attrs)
 
 
 class OrganizerProfileSerializer(serializers.ModelSerializer):
@@ -19,11 +43,11 @@ class OrganizerProfileSerializer(serializers.ModelSerializer):
             'id', 'company_name', 'company_registration_number', 'phone_number', 'address',
             'cnic_number', 'cnic_document', 'company_document',
             'cnic_uploaded', 'company_document_uploaded',
-            'status', 'rejection_reason', 'created_at', 'updated_at',
-        ]
+            'status', 'rejection_reason', 'last_seen_status', 'created_at', 'updated_at',
+        ] + PAYOUT_FIELDS
         read_only_fields = [
             'id', 'cnic_document', 'company_document',
-            'status', 'rejection_reason', 'created_at', 'updated_at',
+            'status', 'rejection_reason', 'last_seen_status', 'created_at', 'updated_at',
         ]
 
     def get_cnic_uploaded(self, obj):
@@ -36,13 +60,19 @@ class OrganizerProfileSerializer(serializers.ModelSerializer):
 class OrganizerProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organizer
-        fields = ['company_name', 'phone_number', 'address']
+        fields = ['company_name', 'phone_number', 'address'] + PAYOUT_FIELDS
+
+    def validate(self, attrs):
+        if 'payout_method' in attrs:
+            return validate_payout_fields(attrs)
+        return attrs
 
 
 class OrganizerStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organizer
-        fields = ['status', 'rejection_reason', 'updated_at']
+        fields = ['status', 'rejection_reason', 'last_seen_status', 'updated_at']
+        read_only_fields = ['status', 'rejection_reason', 'updated_at']
 
 
 class CnicUploadSerializer(serializers.ModelSerializer):
@@ -72,7 +102,7 @@ class AdminOrganizerSerializer(serializers.ModelSerializer):
             'phone_number', 'address', 'cnic_number', 'cnic_document', 'company_document',
             'cnic_uploaded', 'company_document_uploaded',
             'status', 'rejection_reason', 'created_at', 'updated_at',
-        ]
+        ] + PAYOUT_FIELDS
 
     def get_cnic_uploaded(self, obj):
         return bool(obj.cnic_document)

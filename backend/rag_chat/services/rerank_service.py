@@ -11,7 +11,7 @@ model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 _MIN_SCORE = 0.0
 
 
-def rerank(question, chunks, top_k=8, min_score=_MIN_SCORE):
+def rerank(question, chunks, top_k=12, min_score=_MIN_SCORE):
     if not chunks:
         return []
 

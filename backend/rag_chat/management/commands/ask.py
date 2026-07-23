@@ -16,7 +16,7 @@ class Command(BaseCommand):
         question = options["question"]
 
         candidate_chunks, detected_game = retrieve_candidates(question)
-        chunks = rerank(question, candidate_chunks, top_k=8)
+        chunks = rerank(question, candidate_chunks, top_k=12)
         context = build_context(chunks)
         answer = generate_answer(question, context)
 

@@ -1,17 +1,29 @@
-from rest_framework import generics, permissions
+from rest_framework import generics
 
-from games.models import Game
+from games.models import Category, Game
 from games.permissions import IsAdminOrReadOnly
-from games.serializers import GameSerializer
+from games.serializers import CategorySerializer, GameSerializer
 
 
 class GameListCreateView(generics.ListCreateAPIView):
-    queryset = Game.objects.all()
+    queryset = Game.objects.prefetch_related('categories').all()
     serializer_class = GameSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
 
 
 class GameDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Game.objects.all()
+    queryset = Game.objects.prefetch_related('categories').all()
     serializer_class = GameSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrReadOnly]
+    permission_classes = [IsAdminOrReadOnly]
+
+
+class CategoryListCreateView(generics.ListCreateAPIView):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+    permission_classes = [IsAdminOrReadOnly]
+
+
+class CategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+    permission_classes = [IsAdminOrReadOnly]

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, Trophy, Gamepad2, Calendar, Users, Loader2, Swords, Clock, CheckCircle2, UserCheck,
   Copy, LogOut, Shield, Wallet, Award, MapPin, Globe, Phone, Mail, Link2, Upload, Trash2, Megaphone, Plus,
@@ -722,6 +722,8 @@ function AnnouncementsSection({ tournamentId, canManage }) {
 export default function TournamentDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const cameFromMyTournaments = location.state?.from === "my-tournaments";
   const [tournament, setTournament] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -861,8 +863,11 @@ export default function TournamentDetail() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10 sm:py-14">
-      <Link to="/tournaments" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary mb-6">
-        <ArrowLeft className="w-4 h-4" /> Back to tournaments
+      <Link
+        to={cameFromMyTournaments ? "/my-tournaments" : "/tournaments"}
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary mb-6"
+      >
+        <ArrowLeft className="w-4 h-4" /> {cameFromMyTournaments ? "Back to my tournaments" : "Back to tournaments"}
       </Link>
 
       <div className="glass rounded-2xl border border-border/60 p-6 sm:p-8">
@@ -1192,6 +1197,7 @@ export default function TournamentDetail() {
             </div>
             <Link
               to={`/tournaments/${id}/bracket`}
+              state={{ from: location.state?.from }}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-heading font-semibold bg-primary text-primary-foreground hover:shadow-[0_0_20px_hsl(186_100%_50%/0.4)] transition-shadow"
             >
               {bracketExists ? "View Bracket" : "Generate Bracket"} <ArrowRight className="w-4 h-4" />

@@ -1,19 +1,47 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from core.models import Follow
+from organizer.models import Organizer
+from organizer.serializers import validate_payout_fields
 
 User = get_user_model()
+
+ORGANIZER_APPLICATION_FIELDS = [
+    'company_name', 'phone_number', 'address',
+    'cnic_number', 'cnic_document',
+    'company_registration_number', 'company_document',
+    'payout_method', 'jazzcash_number', 'bank_name', 'bank_account_title', 'bank_account_number',
+]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, validators=[validate_password])
+    role = serializers.ChoiceField(choices=['user', 'organizer'], write_only=True, required=False, default='user')
+
+    # Organizer application fields — only required/used when role == 'organizer', in which
+    # case the organizer profile is created alongside the account in one step.
+    company_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    phone_number = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    address = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    cnic_number = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    cnic_document = serializers.FileField(write_only=True, required=False, allow_null=True)
+    company_registration_number = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    company_document = serializers.FileField(write_only=True, required=False, allow_null=True)
+    payout_method = serializers.ChoiceField(
+        choices=Organizer.PayoutMethod.choices, write_only=True, required=False, allow_blank=True,
+    )
+    jazzcash_number = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    bank_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    bank_account_title = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    bank_account_number = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = User
-        fields = ['email', 'password', 'first_name', 'last_name']
+        fields = ['email', 'password', 'first_name', 'last_name', 'role'] + ORGANIZER_APPLICATION_FIELDS
 
     def validate_email(self, value):
         email = User.objects.normalize_email(value)
@@ -21,8 +49,30 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('A user with this email already exists.')
         return email
 
+    def validate(self, attrs):
+        if attrs.get('role') == 'organizer':
+            errors = {}
+            if not attrs.get('company_name'):
+                errors['company_name'] = 'This field is required to register as an organizer.'
+            if not attrs.get('cnic_document'):
+                errors['cnic_document'] = 'Please upload your CNIC document.'
+            if not attrs.get('company_document'):
+                errors['company_document'] = 'Please upload a company document.'
+            if errors:
+                raise serializers.ValidationError(errors)
+            validate_payout_fields(attrs)
+        return attrs
+
     def create(self, validated_data):
-        return User.objects.create_user(**validated_data)
+        role = validated_data.pop('role', 'user')
+        organizer_data = {
+            field: validated_data.pop(field) for field in ORGANIZER_APPLICATION_FIELDS if field in validated_data
+        }
+        with transaction.atomic():
+            user = User.objects.create_user(**validated_data)
+            if role == 'organizer':
+                Organizer.objects.create(user=user, **organizer_data)
+        return user
 
 
 class LoginSerializer(TokenObtainPairSerializer):

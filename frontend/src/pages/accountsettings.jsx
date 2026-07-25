@@ -193,10 +193,24 @@ export default function AccountSettings() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
 
+  const getPasswordError = (value) => {
+    if (value.length < 8) return "Password must be at least 8 characters.";
+    if (!/[A-Z]/.test(value)) return "Password must include an uppercase letter.";
+    if (!/[a-z]/.test(value)) return "Password must include a lowercase letter.";
+    if (!/[0-9]/.test(value)) return "Password must include a number.";
+    if (!/[^A-Za-z0-9]/.test(value)) return "Password must include a special character.";
+    return "";
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setError("");
     setSuccess(false);
+    const pwError = getPasswordError(newPassword);
+    if (pwError) {
+      setError(pwError);
+      return;
+    }
     if (newPassword !== confirm) {
       setError("New passwords do not match.");
       return;
@@ -268,6 +282,9 @@ export default function AccountSettings() {
               className="w-full pl-11 pr-4 py-3 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary focus:neon-border transition-all placeholder:text-muted-foreground/70"
             />
           </div>
+          <p className="text-[11px] text-muted-foreground -mt-2 px-1">
+            At least 8 characters, with uppercase, lowercase, a number and a special character.
+          </p>
           <div className="relative">
             <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input

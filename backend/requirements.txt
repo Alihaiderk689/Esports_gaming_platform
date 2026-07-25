@@ -99,6 +99,15 @@ safetensors==0.7.0
 scikit-learn==1.6.1
 scipy==1.13.1
 sentence-transformers==5.1.2
+
+# RAG evaluation (evaluate_rag management command)
+# Judge LLM goes through langchain-openai pointed at Groq's OpenAI-compatible
+# endpoint (see evaluate_rag.py) instead of langchain-groq, which pins
+# groq<1.0 and would downgrade the groq==1.0.0 pinned above.
+ragas==0.4.3
+langchain-openai==0.3.35
+langchain-huggingface==0.3.1
+datasets==4.5.0
 shellingham==1.5.4
 six==1.17.0
 sniffio==1.3.1

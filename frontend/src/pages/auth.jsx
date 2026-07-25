@@ -18,10 +18,40 @@ export default function Auth() {
   const [info, setInfo] = useState(location.state?.info || "");
   const [justRegistered, setJustRegistered] = useState(false);
   const [form, setForm] = useState({ full_name: "", email: "", password: "", confirm: "" });
+  const emptyOrgForm = {
+    company_name: "", phone_number: "", address: "",
+    cnic_number: "", cnic_document: null,
+    company_registration_number: "", company_document: null,
+    payout_method: "jazzcash", jazzcash_number: "", bank_name: "", bank_account_title: "", bank_account_number: "",
+  };
+  const [orgForm, setOrgForm] = useState(emptyOrgForm);
 
   const from = location.state?.from || "/";
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const setOrg = (k) => (e) => setOrgForm((f) => ({ ...f, [k]: e.target.value }));
+  const setOrgFile = (k) => (e) => setOrgForm((f) => ({ ...f, [k]: e.target.files?.[0] || null }));
+
+  const getPasswordError = (password) => {
+    if (password.length < 8) return "Password must be at least 8 characters.";
+    if (!/[A-Z]/.test(password)) return "Password must include an uppercase letter.";
+    if (!/[a-z]/.test(password)) return "Password must include a lowercase letter.";
+    if (!/[0-9]/.test(password)) return "Password must include a number.";
+    if (!/[^A-Za-z0-9]/.test(password)) return "Password must include a special character.";
+    return "";
+  };
+
+  const getOrganizerFormError = () => {
+    if (!orgForm.company_name.trim()) return "Company / organization name is required.";
+    if (!orgForm.cnic_document) return "Please upload your CNIC document.";
+    if (!orgForm.company_document) return "Please upload a company document.";
+    if (orgForm.payout_method === "jazzcash") {
+      if (!orgForm.jazzcash_number.trim()) return "JazzCash number is required.";
+    } else if (!orgForm.bank_name.trim() || !orgForm.bank_account_title.trim() || !orgForm.bank_account_number.trim()) {
+      return "Bank name, account title, and account number are required.";
+    }
+    return "";
+  };
 
   // Organizers (any application status) always land on their dashboard, never the
   // public landing page — only a non-organizer's own redirect-origin ("from") wins.
@@ -78,9 +108,23 @@ export default function Auth() {
     e.preventDefault();
     setError("");
     setInfo("");
-    if (mode === "signup" && form.password !== form.confirm) {
-      setError("Passwords do not match.");
-      return;
+    if (mode === "signup") {
+      const pwError = getPasswordError(form.password);
+      if (pwError) {
+        setError(pwError);
+        return;
+      }
+      if (form.password !== form.confirm) {
+        setError("Passwords do not match.");
+        return;
+      }
+      if (role === "organizer") {
+        const orgError = getOrganizerFormError();
+        if (orgError) {
+          setError(orgError);
+          return;
+        }
+      }
     }
     setLoading(true);
     try {
@@ -90,10 +134,42 @@ export default function Auth() {
       } else {
         const [first_name, ...rest] = form.full_name.trim().split(/\s+/);
         const last_name = rest.join(" ");
-        await register({ first_name, last_name, email: form.email, password: form.password, role });
+        if (role === "organizer") {
+          const fd = new FormData();
+          fd.append("first_name", first_name);
+          fd.append("last_name", last_name);
+          fd.append("email", form.email);
+          fd.append("password", form.password);
+          fd.append("role", "organizer");
+          fd.append("company_name", orgForm.company_name.trim());
+          if (orgForm.phone_number.trim()) fd.append("phone_number", orgForm.phone_number.trim());
+          if (orgForm.address.trim()) fd.append("address", orgForm.address.trim());
+          if (orgForm.cnic_number.trim()) fd.append("cnic_number", orgForm.cnic_number.trim());
+          fd.append("cnic_document", orgForm.cnic_document);
+          if (orgForm.company_registration_number.trim()) {
+            fd.append("company_registration_number", orgForm.company_registration_number.trim());
+          }
+          fd.append("company_document", orgForm.company_document);
+          fd.append("payout_method", orgForm.payout_method);
+          if (orgForm.payout_method === "jazzcash") {
+            fd.append("jazzcash_number", orgForm.jazzcash_number.trim());
+          } else {
+            fd.append("bank_name", orgForm.bank_name.trim());
+            fd.append("bank_account_title", orgForm.bank_account_title.trim());
+            fd.append("bank_account_number", orgForm.bank_account_number.trim());
+          }
+          await register(fd, { formData: true });
+        } else {
+          await register({ first_name, last_name, email: form.email, password: form.password, role: "user" });
+        }
         setMode("login");
         setForm((f) => ({ ...f, password: "", confirm: "" }));
-        setInfo("Account created! Check your email to verify it, then sign in.");
+        setOrgForm(emptyOrgForm);
+        setInfo(
+          role === "organizer"
+            ? "Account created! Check your email to verify it, then sign in. Your organizer application is now under review."
+            : "Account created! Check your email to verify it, then sign in.",
+        );
         setJustRegistered(true);
       }
     } catch (err) {
@@ -255,14 +331,141 @@ export default function Auth() {
                 }
               />
               {mode === "signup" && (
-                <Field
-                  icon={Lock}
-                  type={showPw ? "text" : "password"}
-                  placeholder="Confirm password"
-                  value={form.confirm}
-                  onChange={set("confirm")}
-                  required
-                />
+                <>
+                  <p className="text-[11px] text-muted-foreground -mt-2 px-1">
+                    At least 8 characters, with uppercase, lowercase, a number and a special character.
+                  </p>
+                  <Field
+                    icon={Lock}
+                    type={showPw ? "text" : "password"}
+                    placeholder="Confirm password"
+                    value={form.confirm}
+                    onChange={set("confirm")}
+                    required
+                  />
+                </>
+              )}
+
+              {mode === "signup" && role === "organizer" && (
+                <div className="space-y-4 pt-4 border-t border-border/60">
+                  <div className="text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground">
+                    Organizer application
+                  </div>
+
+                  <input
+                    required
+                    value={orgForm.company_name}
+                    onChange={setOrg("company_name")}
+                    placeholder="Company / organization name"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      value={orgForm.phone_number}
+                      onChange={setOrg("phone_number")}
+                      placeholder="Phone (optional)"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                    />
+                    <input
+                      value={orgForm.address}
+                      onChange={setOrg("address")}
+                      placeholder="Address (optional)"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                    />
+                  </div>
+
+                  <div className="pt-2 border-t border-border/60 space-y-2">
+                    <input
+                      value={orgForm.cnic_number}
+                      onChange={setOrg("cnic_number")}
+                      placeholder="CNIC number (optional)"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                    />
+                    <label className="block text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground">
+                      CNIC document
+                    </label>
+                    <input
+                      type="file"
+                      required
+                      onChange={setOrgFile("cnic_document")}
+                      className="w-full text-xs text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-primary file:text-primary-foreground file:text-xs file:font-heading file:font-semibold"
+                    />
+                  </div>
+
+                  <div className="pt-2 border-t border-border/60 space-y-2">
+                    <input
+                      value={orgForm.company_registration_number}
+                      onChange={setOrg("company_registration_number")}
+                      placeholder="Company registration number (optional)"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                    />
+                    <label className="block text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground">
+                      Company document
+                    </label>
+                    <input
+                      type="file"
+                      required
+                      onChange={setOrgFile("company_document")}
+                      className="w-full text-xs text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-primary file:text-primary-foreground file:text-xs file:font-heading file:font-semibold"
+                    />
+                  </div>
+
+                  <div className="pt-2 border-t border-border/60">
+                    <label className="block text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground mb-2">
+                      Payout method
+                    </label>
+                    <div className="flex gap-1 p-1 rounded-xl bg-muted/30 border border-border w-fit mb-3">
+                      {[{ value: "jazzcash", label: "JazzCash" }, { value: "bank", label: "Bank Account" }].map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setOrgForm((f) => ({ ...f, payout_method: opt.value }))}
+                          className={`px-3.5 py-1.5 rounded-lg text-sm font-heading font-semibold transition-colors ${
+                            orgForm.payout_method === opt.value
+                              ? "bg-primary text-primary-foreground"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {orgForm.payout_method === "jazzcash" ? (
+                      <input
+                        required
+                        value={orgForm.jazzcash_number}
+                        onChange={setOrg("jazzcash_number")}
+                        placeholder="JazzCash number, e.g. 03001234567"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                      />
+                    ) : (
+                      <div className="space-y-3">
+                        <input
+                          required
+                          value={orgForm.bank_name}
+                          onChange={setOrg("bank_name")}
+                          placeholder="Bank name"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                        />
+                        <input
+                          required
+                          value={orgForm.bank_account_title}
+                          onChange={setOrg("bank_account_title")}
+                          placeholder="Account title"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                        />
+                        <input
+                          required
+                          value={orgForm.bank_account_number}
+                          onChange={setOrg("bank_account_number")}
+                          placeholder="Account number / IBAN"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
 
               {error && (

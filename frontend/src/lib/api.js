@@ -53,6 +53,9 @@ async function handleResponse(res) {
   }
   if (!res.ok) {
     let msg = data?.detail || data?.message || data?.error;
+    // DRF validation errors (e.g. password strength, duplicate email) come back
+    // as { field: ["reason", ...] } with no detail/message/error wrapper.
+    if (!msg && data && typeof data === "object") msg = data;
     if (msg && typeof msg === "object") msg = Object.values(msg).flat().join(" ");
     const err = new Error(typeof msg === "string" ? msg : `Request failed (${res.status})`);
     err.status = res.status;

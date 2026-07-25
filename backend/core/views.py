@@ -68,11 +68,11 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         send_verification_email(user)
+        detail = 'Registration successful. Check your email to verify your account.'
+        if hasattr(user, 'organizer_profile'):
+            detail += ' Your organizer application is now under review.'
         return Response(
-            {
-                'user': ProfileSerializer(user).data,
-                'detail': 'Registration successful. Check your email to verify your account.',
-            },
+            {'user': ProfileSerializer(user).data, 'detail': detail},
             status=status.HTTP_201_CREATED,
         )
 

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Trophy, Gamepad2, Calendar, Users, Loader2, Plus, MapPin, Wifi } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import { api } from "@/lib/api";
+import TournamentCard from "@/components/tournaments/TournamentCard";
 
 export default function Tournaments() {
   const [tournaments, setTournaments] = useState([]);
@@ -62,42 +63,9 @@ export default function Tournaments() {
       ) : visibleTournaments.length === 0 ? (
         <div className="text-center py-20 text-muted-foreground">No upcoming tournaments yet.</div>
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {visibleTournaments.map((t) => (
-            <Link
-              key={t.id}
-              to={`/tournaments/${t.id}`}
-              className="group flex flex-col sm:flex-row sm:items-center gap-4 p-4 sm:p-5 rounded-xl glass border border-border/60 hover:neon-border transition-all"
-            >
-              <div className="shrink-0 w-12 h-12 rounded-lg overflow-hidden grid place-items-center bg-primary/10 text-primary">
-                {t.cover_image_url ? (
-                  <img src={t.cover_image_url} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <Trophy className="w-6 h-6" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-heading font-bold text-lg">{t.title}</h3>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-muted-foreground">
-                  <span className="flex items-center gap-1"><Gamepad2 className="w-3.5 h-3.5" /> {t.game}</span>
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5" />
-                    {new Date(t.start_date).toLocaleString(undefined, {
-                      dateStyle: "medium", timeStyle: "short",
-                    })}
-                  </span>
-                  {t.mode === "online" ? (
-                    <span className="flex items-center gap-1"><Wifi className="w-3.5 h-3.5" /> Online{t.platform ? ` · ${t.platform}` : ""}</span>
-                  ) : (
-                    <span className="flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5" />
-                      {[t.venue_name, t.venue_city].filter(Boolean).join(", ") || (t.mode === "hybrid" ? "Hybrid" : "Venue TBA")}
-                    </span>
-                  )}
-                  <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {t.teams} registered</span>
-                </div>
-              </div>
-            </Link>
+            <TournamentCard key={t.id} tournament={t} />
           ))}
         </div>
       )}

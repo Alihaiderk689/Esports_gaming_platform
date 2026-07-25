@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Search, Loader2, Gamepad2 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -63,8 +64,9 @@ export default function Games() {
       {!loading && !error && visible.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {visible.map((g) => (
-            <div
+            <Link
               key={g.id}
+              to={`/games/${g.slug}`}
               className="group relative aspect-[3/4] rounded-2xl overflow-hidden glass border border-border/60"
             >
               <img
@@ -100,7 +102,7 @@ export default function Games() {
                   </p>
                 )}
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       )}

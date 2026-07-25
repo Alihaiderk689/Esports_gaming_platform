@@ -37,8 +37,8 @@ export function AppAuthProvider({ children }) {
     return me;
   };
 
-  const register = async (payload) => {
-    const data = await api.post("/api/auth/register/", payload);
+  const register = async (payload, opts) => {
+    const data = await api.post("/api/auth/register/", payload, opts);
     if (data.access || data.access_token) {
       tokenStorage.set(data.access || data.access_token, data.refresh);
       setUser(data.user || (await api.get("/api/auth/me/").catch(() => null)));

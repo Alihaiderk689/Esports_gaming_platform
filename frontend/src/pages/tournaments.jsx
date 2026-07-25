@@ -69,8 +69,12 @@ export default function Tournaments() {
               to={`/tournaments/${t.id}`}
               className="group flex flex-col sm:flex-row sm:items-center gap-4 p-4 sm:p-5 rounded-xl glass border border-border/60 hover:neon-border transition-all"
             >
-              <div className="shrink-0 w-12 h-12 rounded-lg grid place-items-center bg-primary/10 text-primary">
-                <Trophy className="w-6 h-6" />
+              <div className="shrink-0 w-12 h-12 rounded-lg overflow-hidden grid place-items-center bg-primary/10 text-primary">
+                {t.cover_image_url ? (
+                  <img src={t.cover_image_url} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <Trophy className="w-6 h-6" />
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="font-heading font-bold text-lg">{t.title}</h3>

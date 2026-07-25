@@ -1,6 +1,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
+from tourny_regist.cover_pool import assign_next_cover
 from tourny_regist.models import Announcement, Registration, Team, TeamMembership, Tournament
 
 
@@ -58,6 +59,7 @@ class TournamentListSerializer(serializers.ModelSerializer):
     end_date = serializers.DateTimeField(source='ends_at', read_only=True)
     teams = serializers.SerializerMethodField()
     phase = serializers.SerializerMethodField()
+    cover_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Tournament
@@ -66,7 +68,7 @@ class TournamentListSerializer(serializers.ModelSerializer):
             'status', 'rejection_reason', 'is_published', 'mode', 'bracket_format', 'team_size',
             'registration_fee', 'prize_pool', 'registration_deadline',
             'max_participants', 'is_registration_open',
-            'venue_name', 'venue_city', 'venue_country', 'platform',
+            'venue_name', 'venue_city', 'venue_country', 'platform', 'cover_image_url',
         ]
 
     def get_organizer(self, obj):
@@ -77,6 +79,12 @@ class TournamentListSerializer(serializers.ModelSerializer):
 
     def get_phase(self, obj):
         return 'live' if obj.starts_at <= timezone.now() else 'upcoming'
+
+    def get_cover_image_url(self, obj):
+        if not obj.cover_image:
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(obj.cover_image.url) if request else obj.cover_image.url
 
 
 class TournamentDetailSerializer(TournamentListSerializer):
@@ -142,12 +150,14 @@ class TournamentApplicationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context['request']
-        return Tournament.objects.create(
+        tournament = Tournament.objects.create(
             organizer=request.user.organizer_profile,
             created_by=request.user,
             status=Tournament.Status.PENDING,
             **validated_data,
         )
+        assign_next_cover(tournament)
+        return tournament
 
 
 class TournamentUpdateSerializer(serializers.ModelSerializer):

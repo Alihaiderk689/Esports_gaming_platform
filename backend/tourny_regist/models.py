@@ -23,6 +23,7 @@ class Tournament(models.Model):
         GROUP_PLAYOFF = 'group_playoff', 'Group Stage + Playoff'
 
     name = models.CharField(max_length=200)
+    cover_image = models.ImageField(upload_to='tournaments/covers/%Y/%m/', blank=True, null=True)
     game = models.ForeignKey('games.Game', related_name='tournaments', on_delete=models.CASCADE)
     organizer = models.ForeignKey(
         'organizer.Organizer', related_name='tournaments', on_delete=models.CASCADE, null=True, blank=True,

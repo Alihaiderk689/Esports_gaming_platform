@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useLocation } from "react-router-dom";
 import { ArrowLeft, Swords, Clock, Crown, ListOrdered, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -174,6 +174,8 @@ function EliminationSections({ bracket, canManage, onSubmitResult }) {
 
 export default function BracketPage() {
   const { id } = useParams();
+  const location = useLocation();
+  const backToTournamentState = { from: location.state?.from };
 
   const [tournament, setTournament] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -279,7 +281,7 @@ export default function BracketPage() {
   if (!tournament.can_manage && bracketState !== "ready" && bracketState !== "loading") {
     return (
       <div className="max-w-lg mx-auto px-4 py-16 text-center">
-        <Link to={`/tournaments/${id}`} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary mb-6">
+        <Link to={`/tournaments/${id}`} state={backToTournamentState} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary mb-6">
           <ArrowLeft className="w-4 h-4" /> Back to tournament
         </Link>
         <p className="text-sm text-muted-foreground">No bracket has been generated for this tournament yet.</p>
@@ -307,7 +309,7 @@ export default function BracketPage() {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-14">
       <div className="flex items-center justify-between gap-4 mb-6">
-        <Link to={`/tournaments/${id}`} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary">
+        <Link to={`/tournaments/${id}`} state={backToTournamentState} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary">
           <ArrowLeft className="w-4 h-4" /> Back to tournament
         </Link>
       </div>

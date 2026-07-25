@@ -36,6 +36,8 @@ import MyTournaments from "@/pages/mytournaments";
 import EditTournament from "@/pages/edittournament";
 import Organizer from "@/pages/organizer";
 import Games from "@/pages/games";
+import GameDetail from "@/pages/gamedetail";
+import About from "@/pages/about";
 import Dashboard from "@/pages/dashboard";
 
 const AuthenticatedApp = () => {
@@ -59,6 +61,8 @@ const AuthenticatedApp = () => {
         <Route element={<NotAdminRoute />}>
           <Route path="/" element={<Landing />} />
           <Route path="/games" element={<Games />} />
+          <Route path="/games/:slug" element={<GameDetail />} />
+          <Route path="/about" element={<About />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/account" element={<AccountSettings />} />

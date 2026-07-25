@@ -3,12 +3,13 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/appauth";
 import { api } from "@/lib/api";
-import { Gamepad2, Menu, X, Search, ChevronDown, LogOut, User as UserIcon, Trophy, LayoutGrid, Plus, ClipboardList, MessageSquare, Settings, ShieldCheck, Building2, Home } from "lucide-react";
+import { Gamepad2, Menu, X, Search, ChevronDown, LogOut, User as UserIcon, Trophy, LayoutGrid, Plus, ClipboardList, MessageSquare, Settings, ShieldCheck, Building2, Home, Info } from "lucide-react";
 
 const PLAYER_NAV = [
   { label: "Home", to: "/", icon: Home, end: true },
   { label: "Tournaments", to: "/tournaments", icon: Trophy },
   { label: "Games", to: "/games", icon: LayoutGrid },
+  { label: "About", to: "/about", icon: Info },
 ];
 
 // Organizers get only these — no Home, no Players table. A tournament opened from

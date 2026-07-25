@@ -1,7 +1,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from tourny_regist.cover_pool import assign_next_cover
+from tourny_regist.game_banners import assign_game_banner
 from tourny_regist.models import Announcement, Registration, Team, TeamMembership, Tournament
 
 
@@ -54,6 +54,7 @@ APPLICATION_FIELDS = [
 class TournamentListSerializer(serializers.ModelSerializer):
     title = serializers.CharField(source='name', read_only=True)
     game = serializers.CharField(source='game.name', read_only=True)
+    game_slug = serializers.CharField(source='game.slug', read_only=True)
     organizer = serializers.SerializerMethodField()
     start_date = serializers.DateTimeField(source='starts_at', read_only=True)
     end_date = serializers.DateTimeField(source='ends_at', read_only=True)
@@ -64,7 +65,7 @@ class TournamentListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tournament
         fields = [
-            'id', 'title', 'game', 'organizer', 'start_date', 'end_date', 'teams', 'phase',
+            'id', 'title', 'game', 'game_slug', 'organizer', 'start_date', 'end_date', 'teams', 'phase',
             'status', 'rejection_reason', 'is_published', 'mode', 'bracket_format', 'team_size',
             'registration_fee', 'prize_pool', 'registration_deadline',
             'max_participants', 'is_registration_open',
@@ -156,7 +157,7 @@ class TournamentApplicationSerializer(serializers.ModelSerializer):
             status=Tournament.Status.PENDING,
             **validated_data,
         )
-        assign_next_cover(tournament)
+        assign_game_banner(tournament)
         return tournament
 
 

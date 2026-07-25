@@ -266,7 +266,6 @@ export default function Auth() {
             {/* Toggle */}
             <div className="relative flex p-1 rounded-xl bg-muted/50 mb-6">
               <motion.div
-                layout
                 className="absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-lg bg-primary"
                 animate={{ x: mode === "login" ? 0 : "100%" }}
                 transition={{ type: "spring", damping: 26, stiffness: 300 }}

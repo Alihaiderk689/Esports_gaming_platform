@@ -186,7 +186,7 @@ export default function Landing() {
                 className="group relative aspect-[3/4] rounded-2xl overflow-hidden glass border border-border/60 cursor-pointer"
               >
                 <img
-                  src={g.image || g.cover_image_url || g.banner || `https://placehold.co/600x800/11131F/00F0FF?text=${encodeURIComponent(g.name)}`}
+                  src={g.image || g.logo_url || g.cover_image_url || g.banner || `https://placehold.co/600x800/11131F/00F0FF?text=${encodeURIComponent(g.name)}`}
                   alt={g.name}
                   className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:opacity-80 group-hover:scale-110 transition-all duration-700"
                 />

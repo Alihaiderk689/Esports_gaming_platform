@@ -2,6 +2,7 @@ import React, { useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/appauth";
 import { Trophy, Users, Gamepad2, Calendar, Play, ChevronRight, Flame, Zap, Crown, Star } from "lucide-react";
 import HeroBackground from "@/components/landing/herobackground";
 import ScrollProgress from "@/components/landing/ScrollProgress";
@@ -32,6 +33,7 @@ const PARTNERS = [
 ];
 
 export default function Landing() {
+  const { user } = useAuth();
   const [games, setGames] = useState(FALLBACK_GAMES);
   const [tournaments, setTournaments] = useState(FALLBACK_TOURNAMENTS);
   const [loadingGames, setLoadingGames] = useState(true);
@@ -177,37 +179,38 @@ export default function Landing() {
           />
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
             {games.map((g, i) => (
-              <motion.div
-                key={g.id}
-                initial={{ opacity: 0, y: 30 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.08 }}
-                className="group relative aspect-[3/4] rounded-2xl overflow-hidden glass border border-border/60 cursor-pointer"
-              >
-                <img
-                  src={g.image || g.logo_url || g.cover_image_url || g.banner || `https://placehold.co/600x800/11131F/00F0FF?text=${encodeURIComponent(g.name)}`}
-                  alt={g.name}
-                  className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:opacity-80 group-hover:scale-110 transition-all duration-700"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
-                <div className="absolute inset-0 grid-overlay opacity-0 group-hover:opacity-30 transition-opacity" />
-                <div className="relative h-full flex flex-col justify-end p-4 sm:p-5">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-[10px] font-heading font-bold uppercase tracking-wider text-primary px-2 py-0.5 rounded-full bg-primary/10 border border-primary/30">
-                      {g.players || (g.active_players ? `${g.active_players}` : "Live")}
-                    </span>
+              <Link key={g.id} to={`/games/${g.slug}`}>
+                <motion.div
+                  initial={{ opacity: 0, y: 30 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: i * 0.08 }}
+                  className="group relative aspect-[3/4] rounded-2xl overflow-hidden glass border border-border/60 cursor-pointer"
+                >
+                  <img
+                    src={g.image || g.logo_url || g.cover_image_url || g.banner || `https://placehold.co/600x800/11131F/00F0FF?text=${encodeURIComponent(g.name)}`}
+                    alt={g.name}
+                    className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:opacity-80 group-hover:scale-110 transition-all duration-700"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
+                  <div className="absolute inset-0 grid-overlay opacity-0 group-hover:opacity-30 transition-opacity" />
+                  <div className="relative h-full flex flex-col justify-end p-4 sm:p-5">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <span className="text-[10px] font-heading font-bold uppercase tracking-wider text-primary px-2 py-0.5 rounded-full bg-primary/10 border border-primary/30">
+                        {g.players || (g.active_players ? `${g.active_players}` : "Live")}
+                      </span>
+                    </div>
+                    <h3 className="font-display font-bold text-lg sm:text-xl group-hover:text-primary transition-colors">
+                      {g.name}
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">{g.tagline || g.description || "Compete now"}</p>
+                    <div className="mt-3 flex items-center gap-1 text-xs font-heading font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Play className="w-3 h-3" /> Enter Arena
+                    </div>
                   </div>
-                  <h3 className="font-display font-bold text-lg sm:text-xl group-hover:text-primary transition-colors">
-                    {g.name}
-                  </h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">{g.tagline || g.description || "Compete now"}</p>
-                  <div className="mt-3 flex items-center gap-1 text-xs font-heading font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Play className="w-3 h-3" /> Enter Arena
-                  </div>
-                </div>
-                <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              </motion.div>
+                  <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                </motion.div>
+              </Link>
             ))}
           </div>
         </div>
@@ -293,7 +296,8 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* CTA */}
+      {/* CTA — signed-in players/organizers already have an account, so this only makes sense for visitors */}
+      {!user && (
       <section className="relative py-24 sm:py-32">
         <div className="mx-auto max-w-4xl px-4 sm:px-6 text-center">
           <motion.div
@@ -321,10 +325,12 @@ export default function Landing() {
           </motion.div>
         </div>
       </section>
+      )}
 
       <footer className="border-t border-border/40 py-8">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
           <div className="font-display font-bold tracking-wider">ESPORTS <span className="gradient-text">PAKISTAN</span></div>
+          <Link to="/about" className="hover:text-primary transition-colors">About</Link>
           <div>© 2026 Esports Pakistan. All rights reserved.</div>
         </div>
       </footer>

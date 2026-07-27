@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Loader2, Calendar, Award, Users, Trophy } from "lucide-react";
 import { api } from "@/lib/api";
@@ -11,6 +11,7 @@ export default function GameDetail() {
   const [tournaments, setTournaments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const tournamentsRef = useRef(null);
 
   useEffect(() => {
     setLoading(true);
@@ -122,12 +123,13 @@ export default function GameDetail() {
                 <div className="font-heading font-bold text-lg">{formatMoney(featured.prize_pool)}</div>
               </div>
             </div>
-            <Link
-              to={`/tournaments/${featured.id}`}
+            <button
+              type="button"
+              onClick={() => tournamentsRef.current?.scrollIntoView({ behavior: "smooth" })}
               className="ml-auto inline-flex items-center gap-2 px-6 py-3 rounded-xl font-heading font-bold text-sm bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow"
             >
-              View Tournament <ArrowRight className="w-4 h-4" />
-            </Link>
+              View Tournaments <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         ) : (
           <div className="glass rounded-2xl border border-border/60 p-8 text-center text-muted-foreground">
@@ -136,7 +138,7 @@ export default function GameDetail() {
           </div>
         )}
 
-        <div className="mt-12">
+        <div ref={tournamentsRef} className="mt-12 scroll-mt-20">
           <h2 className="font-display font-bold text-2xl mb-6">Tournaments</h2>
           {upcomingOrLive.length === 0 ? (
             <p className="text-sm text-muted-foreground">Check back soon for {game.name} tournaments.</p>

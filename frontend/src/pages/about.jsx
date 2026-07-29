@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Trophy, Users, Gamepad2, Swords, ShieldCheck, TrendingUp, ChevronRight } from "lucide-react";
 import { api } from "@/lib/api";
@@ -25,11 +25,24 @@ const PILLARS = [
 
 export default function About() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [games, setGames] = useState([]);
 
   useEffect(() => {
     api.get("/api/games/").then(setGames).catch(() => {});
   }, []);
+
+  // Players don't get an About page — bounce them back home. Logged-out
+  // visitors and approved organizers can still reach it directly.
+  useEffect(() => {
+    if (!user || user.is_staff) return;
+    api
+      .get("/api/organizer/status/")
+      .then((data) => {
+        if (data.status !== "approved") navigate("/", { replace: true });
+      })
+      .catch(() => navigate("/", { replace: true }));
+  }, [user, navigate]);
 
   return (
     <div className="overflow-hidden">

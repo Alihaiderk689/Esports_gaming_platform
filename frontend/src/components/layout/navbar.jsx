@@ -3,7 +3,7 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/appauth";
 import { api } from "@/lib/api";
-import { Gamepad2, Menu, X, Search, ChevronDown, LogOut, User as UserIcon, Trophy, LayoutGrid, Plus, ClipboardList, MessageSquare, Settings, ShieldCheck, Building2, Home, Info } from "lucide-react";
+import { Gamepad2, Menu, X, ChevronDown, LogOut, User as UserIcon, Trophy, LayoutGrid, Plus, ClipboardList, MessageSquare, Settings, ShieldCheck, Building2, Home, Info } from "lucide-react";
 
 const PLAYER_NAV = [
   { label: "Home", to: "/", icon: Home, end: true },
@@ -39,7 +39,14 @@ export default function Navbar({ onToggleChat }) {
   }, [user]);
 
   // Admins are restricted to the admin dashboard — no player/organizer-facing nav for them.
-  const NAV = user?.is_staff ? [] : isOrganizer ? ORGANIZER_NAV : PLAYER_NAV;
+  // Logged-in players don't get "About" — that's still shown to logged-out visitors, though.
+  const NAV = user?.is_staff
+    ? []
+    : isOrganizer
+      ? ORGANIZER_NAV
+      : user
+        ? PLAYER_NAV.filter((item) => item.label !== "About")
+        : PLAYER_NAV;
 
   return (
     <header className="sticky top-0 z-40 glass border-b border-border/60">
@@ -91,20 +98,14 @@ export default function Navbar({ onToggleChat }) {
           {/* Right actions */}
           <div className="flex items-center gap-2">
             {!user?.is_staff && (
-              <>
-                <button className="hidden sm:grid place-items-center w-9 h-9 rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition-colors">
-                  <Search className="w-5 h-5" />
-                </button>
-
-                <button
-                  onClick={onToggleChat}
-                  className="grid place-items-center w-9 h-9 rounded-lg text-muted-foreground hover:text-accent hover:bg-muted transition-colors relative"
-                  title="Ask the Esports AI"
-                >
-                  <MessageSquare className="w-5 h-5" />
-                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-accent animate-pulse" />
-                </button>
-              </>
+              <button
+                onClick={onToggleChat}
+                className="grid place-items-center w-9 h-9 rounded-lg text-muted-foreground hover:text-accent hover:bg-muted transition-colors relative"
+                title="Ask the Esports AI"
+              >
+                <MessageSquare className="w-5 h-5" />
+                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-accent animate-pulse" />
+              </button>
             )}
 
             {user ? (

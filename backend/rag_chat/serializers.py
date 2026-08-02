@@ -54,9 +54,13 @@ class RuleBookUploadSerializer(serializers.ModelSerializer):
 
 class ChatRequestSerializer(serializers.Serializer):
 
+    # Caps the cost/latency of a single request — this text flows straight into
+    # vector search and the Groq prompt, both billed per token/call, with no
+    # cap of its own downstream.
     message = serializers.CharField(
         required=True,
-        allow_blank=False
+        allow_blank=False,
+        max_length=2000,
     )
 
 

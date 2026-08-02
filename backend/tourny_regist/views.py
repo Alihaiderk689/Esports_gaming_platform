@@ -1,3 +1,4 @@
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -170,8 +171,12 @@ class TeamCreateView(APIView):
 
         serializer = TeamCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        team = Team.objects.create(tournament=tournament, captain=request.user, **serializer.validated_data)
-        TeamMembership.objects.create(team=team, player=request.user)
+        try:
+            with transaction.atomic():
+                team = Team.objects.create(tournament=tournament, captain=request.user, **serializer.validated_data)
+                TeamMembership.objects.create(team=team, player=request.user)
+        except IntegrityError:
+            raise ValidationError({'name': 'A team with this name already exists in this tournament.'})
         return Response(TeamSerializer(team).data, status=status.HTTP_201_CREATED)
 
 
@@ -188,6 +193,7 @@ class MyTeamView(APIView):
 
 class TeamJoinView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'team_join'
 
     def post(self, request, pk):
         tournament = get_object_or_404(Tournament, pk=pk, status=Tournament.Status.APPROVED)
@@ -200,13 +206,23 @@ class TeamJoinView(APIView):
         serializer = TeamJoinSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         code = serializer.validated_data['invite_code'].strip().upper()
-        team = Team.objects.filter(tournament=tournament, invite_code=code).first()
-        if team is None:
-            raise ValidationError({'invite_code': 'Invalid invite code.'})
-        if team.members.count() >= tournament.team_size:
-            raise ValidationError({'detail': 'This team is already full.'})
 
-        TeamMembership.objects.create(team=team, player=request.user)
+        # select_for_update locks this team row for the duration of the
+        # transaction, so two simultaneous joins against the same last open
+        # slot serialize instead of both reading "count < team_size" and both
+        # succeeding — the second request re-counts only after the first
+        # request's membership insert has committed and the lock is released.
+        with transaction.atomic():
+            team = Team.objects.select_for_update().filter(tournament=tournament, invite_code=code).first()
+            if team is None:
+                raise ValidationError({'invite_code': 'Invalid invite code.'})
+            if team.members.count() >= tournament.team_size:
+                raise ValidationError({'detail': 'This team is already full.'})
+            try:
+                TeamMembership.objects.create(team=team, player=request.user)
+            except IntegrityError:
+                raise ValidationError({'detail': 'You are already on this team.'})
+
         return Response(TeamSerializer(team).data, status=status.HTTP_201_CREATED)
 
 
@@ -248,12 +264,20 @@ class TeamRegisterView(APIView):
             raise ValidationError({'detail': 'Registration is closed for this tournament.'})
         if tournament.registration_deadline and timezone.now() > tournament.registration_deadline:
             raise ValidationError({'detail': 'The registration deadline for this tournament has passed.'})
-        if Registration.objects.filter(tournament=tournament, player=request.user).exists():
-            raise ValidationError({'detail': 'This team is already registered.'})
-        if tournament.max_participants is not None and tournament.registrations.count() >= tournament.max_participants:
-            raise ValidationError({'detail': 'This tournament has reached its participant limit.'})
 
-        registration = Registration.objects.create(tournament=tournament, player=request.user, team=team)
+        try:
+            # Locks the tournament row so a simultaneous registration can't slip
+            # past the max_participants check between here and the create() below.
+            with transaction.atomic():
+                Tournament.objects.select_for_update().get(pk=tournament.pk)
+                if Registration.objects.filter(tournament=tournament, player=request.user).exists():
+                    raise ValidationError({'detail': 'This team is already registered.'})
+                if tournament.max_participants is not None and tournament.registrations.count() >= tournament.max_participants:
+                    raise ValidationError({'detail': 'This tournament has reached its participant limit.'})
+                registration = Registration.objects.create(tournament=tournament, player=request.user, team=team)
+        except IntegrityError:
+            raise ValidationError({'detail': 'This team is already registered.'})
+
         return Response(RegistrationSerializer(registration, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 

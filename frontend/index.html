@@ -10,6 +10,15 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!--
+      Baseline defense-in-depth against XSS: restricts which origins can supply
+      executable script. 'unsafe-inline' is required in style-src (not script-src)
+      because framer-motion drives its animations via inline style="" attributes
+      on DOM nodes — without it, every animation on the site breaks. connect-src
+      stays broad (https: + localhost) since the API origin is environment-
+      dependent (VITE_API_URL) and can't be pinned to one value at build time.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https: http://localhost:8000; connect-src 'self' https: http://localhost:8000; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self';" />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>

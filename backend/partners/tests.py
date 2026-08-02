@@ -45,6 +45,17 @@ class PartnerApiTests(APITestCase):
         resp = self.client.post('/api/partners/', {'name': 'Red Bull'})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_create_case_insensitive_duplicate_name_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.post('/api/partners/', {'name': 'red bull'})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('name', resp.data)
+
+    def test_patch_own_name_unchanged_not_rejected_as_duplicate(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.patch(f'/api/partners/{self.partner.pk}/', {'name': 'Red Bull', 'display_order': 2})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+
     def test_patch_forbidden_for_non_admin(self):
         resp = self.client.patch(f'/api/partners/{self.partner.pk}/', {'display_order': 5})
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)

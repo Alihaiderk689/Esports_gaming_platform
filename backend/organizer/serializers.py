@@ -6,6 +6,17 @@ from organizer.models import Organizer
 PAYOUT_FIELDS = ['payout_method', 'jazzcash_number', 'bank_name', 'bank_account_title', 'bank_account_number']
 
 
+def _mask_tail(value, visible=4):
+    """Show only the last `visible` characters — used so browsing the organizer
+    list doesn't expose everyone's full CNIC/bank/JazzCash number at once. The
+    detail view still shows the real value, since an admin reviewing one
+    specific application needs it to verify identity and process payouts."""
+    value = str(value or '')
+    if len(value) <= visible:
+        return '•' * len(value)
+    return '•' * (len(value) - visible) + value[-visible:]
+
+
 def validate_payout_fields(attrs, *, require_method=True):
     method = attrs.get('payout_method')
     errors = {}
@@ -109,6 +120,20 @@ class AdminOrganizerSerializer(serializers.ModelSerializer):
 
     def get_company_document_uploaded(self, obj):
         return bool(obj.company_document)
+
+
+class AdminOrganizerListSerializer(AdminOrganizerSerializer):
+    """Used for the organizer list view only — masks CNIC/bank/JazzCash numbers
+    so browsing pending applications doesn't expose every organizer's full
+    financial/identity data on one page. AdminOrganizerSerializer (detail view)
+    still returns the real values."""
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for field in ('cnic_number', 'jazzcash_number', 'bank_account_number'):
+            if data.get(field):
+                data[field] = _mask_tail(data[field])
+        return data
 
 
 class AdminOrganizerUpdateSerializer(serializers.ModelSerializer):

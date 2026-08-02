@@ -220,6 +220,7 @@ export default function AccountSettings() {
       await api.post("/api/auth/change-password/", {
         current_password: currentPassword,
         new_password: newPassword,
+        confirm_password: confirm,
       });
       setCurrentPassword("");
       setNewPassword("");

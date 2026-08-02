@@ -11,7 +11,12 @@ def display_name(user, tournament=None):
         if team is not None:
             return team.name
     full_name = f'{user.first_name} {user.last_name}'.strip()
-    return full_name or user.email
+    # Bracket/match data (this function feeds the *_email serializer fields
+    # below, and the standings payload) is visible to any authenticated user,
+    # not just tournament participants — never fall back to a real email
+    # address here, since that would leak a player's PII to strangers just
+    # because they never got around to setting a display name.
+    return full_name or f'Player #{user.pk}'
 
 
 class MatchSerializer(serializers.ModelSerializer):

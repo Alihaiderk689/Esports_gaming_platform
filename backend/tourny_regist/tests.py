@@ -1,13 +1,20 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from games.models import Game
 from organizer.models import Organizer
-from tourny_regist.models import Announcement, Registration, Tournament
+from tourny_regist.models import Announcement, Registration, Team, Tournament
+from tourny_regist.serializers import TournamentApplicationSerializer
 
 User = get_user_model()
+
+_PDF_BYTES = b'%PDF-1.4\n' + b'fake pdf body'.ljust(16, b'\x00')
 
 
 class TournamentRegistrationApiTests(APITestCase):
@@ -289,3 +296,153 @@ class AnnouncementApiTests(APITestCase):
         resp = self.client.delete(f'/api/announcements/{announcement.pk}/')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Announcement.objects.filter(pk=announcement.pk).exists())
+
+
+class TournamentApplicationValidationTests(TestCase):
+    """Direct serializer tests for the validation added to TournamentApplicationSerializer —
+    unit-style (no HTTP layer) since .is_valid() alone never triggers a Cloudinary
+    upload for the required document fields, only .save() would."""
+
+    def setUp(self):
+        self.game = Game.objects.create(name='Validation Test Game', genre='FPS')
+
+    def _payload(self, **overrides):
+        payload = {
+            'name': 'Test Cup',
+            'game': self.game.pk,
+            'mode': Tournament.Mode.ONLINE,
+            'bracket_format': Tournament.BracketFormat.SINGLE,
+            'team_size': 1,
+            'registration_fee': '0',
+            'prize_pool': '0',
+            'starts_at': timezone.now() + timedelta(days=7),
+            'platform': 'PC',
+            'company_registration_certificate': SimpleUploadedFile(
+                'doc.pdf', _PDF_BYTES, content_type='application/pdf',
+            ),
+            'organizer_cnic_front': SimpleUploadedFile('front.pdf', _PDF_BYTES, content_type='application/pdf'),
+            'organizer_cnic_back': SimpleUploadedFile('back.pdf', _PDF_BYTES, content_type='application/pdf'),
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_valid_payload_accepted(self):
+        serializer = TournamentApplicationSerializer(data=self._payload())
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_negative_registration_fee_rejected(self):
+        serializer = TournamentApplicationSerializer(data=self._payload(registration_fee='-500'))
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('registration_fee', serializer.errors)
+
+    def test_negative_prize_pool_rejected(self):
+        serializer = TournamentApplicationSerializer(data=self._payload(prize_pool='-1'))
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('prize_pool', serializer.errors)
+
+    def test_starts_at_in_past_rejected(self):
+        serializer = TournamentApplicationSerializer(
+            data=self._payload(starts_at=timezone.now() - timedelta(days=1)),
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('starts_at', serializer.errors)
+
+    def test_registration_deadline_in_past_rejected(self):
+        serializer = TournamentApplicationSerializer(
+            data=self._payload(registration_deadline=timezone.now() - timedelta(days=1)),
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('registration_deadline', serializer.errors)
+
+    def test_zero_team_size_rejected(self):
+        serializer = TournamentApplicationSerializer(data=self._payload(team_size=0))
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('team_size', serializer.errors)
+
+    def test_zero_max_participants_rejected(self):
+        serializer = TournamentApplicationSerializer(data=self._payload(max_participants=0))
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('max_participants', serializer.errors)
+
+    def test_invalid_contact_phone_rejected(self):
+        serializer = TournamentApplicationSerializer(data=self._payload(contact_phone='abc'))
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('contact_phone', serializer.errors)
+
+    def test_valid_contact_phone_accepted(self):
+        serializer = TournamentApplicationSerializer(data=self._payload(contact_phone='+923001234567'))
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+
+class TeamApiTests(APITestCase):
+    def setUp(self):
+        self.game = Game.objects.create(name='Team Game', genre='MOBA')
+        self.organizer_user = User.objects.create_user(email='team-organizer@example.com', password='StrongPass123')
+        self.organizer = Organizer.objects.create(user=self.organizer_user, company_name='Team Co')
+        self.tournament = Tournament.objects.create(
+            name='Team Cup', game=self.game, organizer=self.organizer,
+            starts_at=timezone.now(), team_size=2, status=Tournament.Status.APPROVED,
+        )
+        self.captain = User.objects.create_user(email='captain@example.com', password='StrongPass123')
+        self.joiner = User.objects.create_user(email='joiner@example.com', password='StrongPass123')
+        self.other_joiner = User.objects.create_user(email='other-joiner@example.com', password='StrongPass123')
+
+    def test_create_team(self):
+        self.client.force_authenticate(user=self.captain)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/teams/', {'name': 'Alpha'})
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertEqual(resp.data['name'], 'Alpha')
+        self.assertEqual(len(resp.data['members']), 1)
+
+    def test_create_team_duplicate_name_rejected_cleanly(self):
+        Team.objects.create(tournament=self.tournament, name='Alpha', captain=self.captain)
+        self.client.force_authenticate(user=self.joiner)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/teams/', {'name': 'Alpha'})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_join_team(self):
+        team = Team.objects.create(tournament=self.tournament, name='Alpha', captain=self.captain)
+        from tourny_regist.models import TeamMembership
+        TeamMembership.objects.create(team=team, player=self.captain)
+
+        self.client.force_authenticate(user=self.joiner)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/teams/join/', {'invite_code': team.invite_code})
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertEqual(len(resp.data['members']), 2)
+
+    def test_join_full_team_rejected(self):
+        team = Team.objects.create(tournament=self.tournament, name='Alpha', captain=self.captain)
+        from tourny_regist.models import TeamMembership
+        TeamMembership.objects.create(team=team, player=self.captain)
+        TeamMembership.objects.create(team=team, player=self.joiner)  # team_size=2, now full
+
+        self.client.force_authenticate(user=self.other_joiner)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/teams/join/', {'invite_code': team.invite_code})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_join_invalid_code_rejected(self):
+        self.client.force_authenticate(user=self.joiner)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/teams/join/', {'invite_code': 'NOTREAL1'})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_register_full_team(self):
+        team = Team.objects.create(tournament=self.tournament, name='Alpha', captain=self.captain)
+        from tourny_regist.models import TeamMembership
+        TeamMembership.objects.create(team=team, player=self.captain)
+        TeamMembership.objects.create(team=team, player=self.joiner)
+
+        self.client.force_authenticate(user=self.captain)
+        resp = self.client.post(f'/api/teams/{team.pk}/register/')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertTrue(Registration.objects.filter(tournament=self.tournament, team=team).exists())
+
+    def test_register_team_twice_rejected_cleanly(self):
+        team = Team.objects.create(tournament=self.tournament, name='Alpha', captain=self.captain)
+        from tourny_regist.models import TeamMembership
+        TeamMembership.objects.create(team=team, player=self.captain)
+        TeamMembership.objects.create(team=team, player=self.joiner)
+        Registration.objects.create(tournament=self.tournament, player=self.captain, team=team)
+
+        self.client.force_authenticate(user=self.captain)
+        resp = self.client.post(f'/api/teams/{team.pk}/register/')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)

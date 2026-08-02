@@ -63,7 +63,7 @@ export default function Landing() {
     <div className="overflow-hidden">
       <ScrollProgress />
       {/* HERO */}
-      <section ref={heroRef} className="relative min-h-[92vh] flex items-center pt-10">
+      <section ref={heroRef} className="relative min-h-[92vh] flex items-center pt-10 overflow-hidden">
         <HeroBackground />
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-background" />
 

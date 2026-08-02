@@ -5,6 +5,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from core.models import Follow
+from core.validators import clean_person_name
 from organizer.models import Organizer
 from organizer.serializers import validate_payout_fields
 
@@ -18,8 +19,20 @@ ORGANIZER_APPLICATION_FIELDS = [
 ]
 
 
-class RegisterSerializer(serializers.ModelSerializer):
+class NameValidationMixin:
+    """Shared first/last name rules for any serializer that lets a user set their
+    own name — registration and later profile edits alike."""
+
+    def validate_first_name(self, value):
+        return clean_person_name(value, 'First name')
+
+    def validate_last_name(self, value):
+        return clean_person_name(value, 'Last name')
+
+
+class RegisterSerializer(NameValidationMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, validators=[validate_password])
+    confirm_password = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=['user', 'organizer'], write_only=True, required=False, default='user')
 
     # Organizer application fields — only required/used when role == 'organizer', in which
@@ -41,15 +54,28 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['email', 'password', 'first_name', 'last_name', 'role'] + ORGANIZER_APPLICATION_FIELDS
+        fields = ['email', 'password', 'confirm_password', 'first_name', 'last_name', 'role'] + ORGANIZER_APPLICATION_FIELDS
+        extra_kwargs = {
+            # first_name/last_name are blank=True on the model (Google sign-in creates
+            # users without going through this serializer at all), but manual
+            # registration requires both.
+            'first_name': {'required': True},
+            'last_name': {'required': True},
+            # Drop DRF's auto-added UniqueValidator (exact-match, generic message) so
+            # validate_email below — case-insensitive, with our own message — is the
+            # only thing that runs.
+            'email': {'validators': []},
+        }
 
     def validate_email(self, value):
-        email = User.objects.normalize_email(value)
+        email = value.strip().lower()
         if User.objects.filter(email__iexact=email).exists():
-            raise serializers.ValidationError('A user with this email already exists.')
+            raise serializers.ValidationError('This email is already registered.')
         return email
 
     def validate(self, attrs):
+        if attrs.get('password') != attrs.get('confirm_password'):
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
         if attrs.get('role') == 'organizer':
             errors = {}
             if not attrs.get('company_name'):
@@ -64,6 +90,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        validated_data.pop('confirm_password')
         role = validated_data.pop('role', 'user')
         organizer_data = {
             field: validated_data.pop(field) for field in ORGANIZER_APPLICATION_FIELDS if field in validated_data
@@ -83,6 +110,9 @@ class LoginSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
+        # Registration stores emails trimmed + lowercased; normalize the login
+        # attempt the same way so a different casing at login doesn't fail auth.
+        attrs[self.username_field] = attrs[self.username_field].strip().lower()
         data = super().validate(attrs)
         data['user'] = ProfileSerializer(self.user).data
         return data
@@ -116,6 +146,12 @@ class ResetPasswordSerializer(serializers.Serializer):
     uid = serializers.CharField()
     token = serializers.CharField()
     new_password = serializers.CharField(validators=[validate_password])
+    confirm_password = serializers.CharField()
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return attrs
 
 
 class VerifyEmailSerializer(serializers.Serializer):
@@ -130,6 +166,12 @@ class ResendVerificationSerializer(serializers.Serializer):
 class ChangePasswordSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return attrs
 
 
 class PlayerSerializer(serializers.ModelSerializer):
@@ -152,7 +194,7 @@ class PlayerSerializer(serializers.ModelSerializer):
         return Follow.objects.filter(follower=request.user, following=obj).exists()
 
 
-class PlayerUpdateSerializer(serializers.ModelSerializer):
+class PlayerUpdateSerializer(NameValidationMixin, serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['first_name', 'last_name']

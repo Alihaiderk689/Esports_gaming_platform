@@ -65,6 +65,21 @@ async function handleResponse(res) {
   return data;
 }
 
+// fetch() itself throws (not a rejected-with-status response) when the
+// network is genuinely unreachable — wifi drops, DNS failure, CORS
+// misconfiguration. Without this, that raw browser error ("Failed to fetch",
+// "Load failed", ...) surfaces straight to the UI instead of the normalized,
+// friendly message every other error path already produces.
+async function safeFetch(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch {
+    const err = new Error("Network error — check your connection and try again.");
+    err.status = 0;
+    throw err;
+  }
+}
+
 async function request(path, { method = "GET", body, auth = true, formData, query } = {}) {
   const url = new URL(API_BASE_URL + path);
   if (query) {
@@ -79,13 +94,13 @@ async function request(path, { method = "GET", body, auth = true, formData, quer
 
   const buildBody = () => (body ? (formData ? body : JSON.stringify(body)) : undefined);
 
-  let res = await fetch(url, { method, headers, body: buildBody(), credentials: "include" });
+  let res = await safeFetch(url, { method, headers, body: buildBody(), credentials: "include" });
 
   if (res.status === 401 && auth && tokenStorage.getRefresh()) {
     const ok = await refreshToken();
     if (ok) {
       headers.Authorization = `Bearer ${tokenStorage.get()}`;
-      res = await fetch(url, { method, headers, body: buildBody(), credentials: "include" });
+      res = await safeFetch(url, { method, headers, body: buildBody(), credentials: "include" });
     }
   }
   return handleResponse(res);

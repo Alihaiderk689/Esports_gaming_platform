@@ -21,8 +21,11 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.static import serve
 
+from core.views import secure_media_view
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('secure-media/', secure_media_view),
     path('api/', include('core.urls')),
     path('api/', include('games.urls')),
     path('api/', include('organizer.urls')),
@@ -34,16 +37,22 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
-    # Exempt media from clickjacking protection (X_FRAME_OPTIONS='DENY' above) so uploaded
-    # documents (e.g. organizer CNIC/company docs) can be previewed in an <iframe> by the admin UI.
-    # never_cache prevents browsers from reusing a stale cached copy of a response that was
-    # served (and blocked) before this exemption was in place, since django.views.static.serve
-    # doesn't send Cache-Control and browsers heuristically cache on Last-Modified alone.
-    media_serve = never_cache(xframe_options_exempt(serve))
+    # Only genuinely public uploads (game logos, tournament cover images — both
+    # meant to be visible to logged-out visitors browsing the site) are served
+    # from here and stay on local disk. Sensitive uploads (CNIC scans, payment
+    # proofs, compliance documents) live in Cloudinary via CloudinarySignedStorage
+    # instead — see core/storage.py and secure_media_view above — precisely so
+    # they're NOT reachable through this catch-all just by guessing a path.
+    #
+    # Exempt from clickjacking protection (X_FRAME_OPTIONS='DENY' above) so cover
+    # images can be previewed in an <iframe> the same way secure_media_view's docs
+    # are. never_cache prevents browsers from reusing a stale cached copy of a
+    # response that was served (and blocked) before this exemption was in place,
+    # since django.views.static.serve doesn't send Cache-Control and browsers
+    # heuristically cache on Last-Modified alone.
+    public_media_serve = never_cache(xframe_options_exempt(serve))
+    media_prefix = settings.MEDIA_URL.lstrip('/')
     urlpatterns += [
-        path(
-            f'{settings.MEDIA_URL.lstrip("/")}<path:path>',
-            media_serve,
-            {'document_root': settings.MEDIA_ROOT},
-        ),
+        path(f'{media_prefix}games/logos/<path:path>', public_media_serve, {'document_root': settings.MEDIA_ROOT / 'games' / 'logos'}),
+        path(f'{media_prefix}tournaments/covers/<path:path>', public_media_serve, {'document_root': settings.MEDIA_ROOT / 'tournaments' / 'covers'}),
     ]

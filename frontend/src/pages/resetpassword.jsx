@@ -42,7 +42,7 @@ export default function ResetPassword() {
     try {
       await api.post(
         "/api/auth/reset-password/",
-        { uid, token, new_password: password },
+        { uid, token, new_password: password, confirm_password: confirm },
         { auth: false }
       );
       navigate("/login", { state: { info: "Password reset. Please sign in." } });

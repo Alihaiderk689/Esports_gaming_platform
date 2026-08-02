@@ -1,5 +1,6 @@
 import logging
 
+from django.db import transaction
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -41,6 +42,17 @@ class ChatServiceUnavailable(APIException):
 
     default_detail = (
         "The chat assistant is temporarily unavailable. Please try again."
+    )
+
+    default_code = "service_unavailable"
+
+
+class RuleBookProcessingError(APIException):
+
+    status_code = 503
+
+    default_detail = (
+        "Could not process this rulebook right now. Please try again."
     )
 
     default_code = "service_unavailable"
@@ -89,33 +101,45 @@ class RuleBookUploadView(generics.CreateAPIView):
             "pdf"
         )
 
+        try:
+            cloudinary_data = upload_pdf(pdf_file)
+        except Exception:
+            logger.exception("Failed to upload rulebook PDF to Cloudinary")
+            raise RuleBookProcessingError("Could not upload the PDF. Please try again.")
 
-        cloudinary_data = upload_pdf(
-            pdf_file
-        )
+        try:
+            with transaction.atomic():
+                rulebook = RuleBook.objects.create(
+                    **serializer.validated_data,
+                    pdf_url=cloudinary_data["url"],
+                    public_id=cloudinary_data["public_id"],
+                    uploaded_by=request.user,
+                )
 
+                pdf_file.seek(0)
+                pdf_content = pdf_file.read()
+                text = extract_text_from_pdf(pdf_content)
+                chunks = split_text_into_chunks(text)
+                embeddings = generate_embeddings([chunk["text"] for chunk in chunks])
+                add_chunks(rulebook.id, chunks, embeddings)
 
-        rulebook = RuleBook.objects.create(
-
-            **serializer.validated_data,
-
-            pdf_url=cloudinary_data["url"],
-
-            public_id=cloudinary_data["public_id"],
-
-            uploaded_by=request.user
-
-        )
-
-        pdf_file.seek(0)
-        pdf_content = pdf_file.read()
-        text = extract_text_from_pdf(pdf_content)
-        chunks = split_text_into_chunks(text)
-        embeddings = generate_embeddings([chunk["text"] for chunk in chunks])
-        add_chunks(rulebook.id, chunks, embeddings)
-
-        rulebook.is_processed = True
-        rulebook.save(update_fields=["is_processed"])
+                rulebook.is_processed = True
+                rulebook.save(update_fields=["is_processed"])
+        except Exception:
+            # transaction.atomic() already rolled back the RuleBook row — the
+            # Cloudinary asset is the one thing left over from before the
+            # rollback boundary, so it needs its own best-effort cleanup here.
+            logger.exception(
+                "Failed to process rulebook PDF (public_id=%s)", cloudinary_data.get("public_id"),
+            )
+            try:
+                delete_pdf(cloudinary_data["public_id"])
+            except Exception:
+                logger.exception(
+                    "Failed to clean up Cloudinary asset %s after a processing failure",
+                    cloudinary_data.get("public_id"),
+                )
+            raise RuleBookProcessingError("The PDF was uploaded but could not be processed. Please try again.")
 
         return Response(
 
@@ -152,6 +176,7 @@ class ChatView(APIView):
     permission_classes = [
         permissions.IsAuthenticated
     ]
+    throttle_scope = 'chat'
 
 
     def post(self, request):
@@ -195,6 +220,7 @@ class ChatView(APIView):
 
         except Exception:
 
+            logger.exception("rag_chat pipeline failed for question=%r", question)
             raise ChatServiceUnavailable()
 
 

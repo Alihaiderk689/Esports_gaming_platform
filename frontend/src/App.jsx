@@ -6,6 +6,7 @@ import PageNotFound from "@/lib/pagenotfound";
 import { AppAuthProvider, useAuth } from "@/lib/appauth";
 import ScrollToTop from "@/components/scrolltotop";
 import ProtectedRoute from "@/lib/protectedroute";
+import GuestRoute from "@/lib/guestroute";
 import AdminRoute from "@/lib/adminroute";
 import NotAdminRoute from "@/lib/notadminroute";
 import OrganizerOrAdminRoute from "@/lib/organizerroute";
@@ -53,7 +54,9 @@ const AuthenticatedApp = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={<Auth />} />
+      <Route element={<GuestRoute />}>
+        <Route path="/login" element={<Auth />} />
+      </Route>
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
@@ -63,6 +66,10 @@ const AuthenticatedApp = () => {
           <Route path="/games" element={<Games />} />
           <Route path="/games/:slug" element={<GameDetail />} />
           <Route path="/about" element={<About />} />
+          {/* Public browsing, same tier as /games — the backing API
+              (/api/tournaments/) is already unauthenticated-readable, and this
+              page already degrades gracefully with no session. */}
+          <Route path="/tournaments" element={<Tournaments />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/account" element={<AccountSettings />} />
@@ -73,7 +80,6 @@ const AuthenticatedApp = () => {
               <Route path="/my-tournaments" element={<MyTournaments />} />
               <Route path="/tournaments/:id/edit" element={<EditTournament />} />
             </Route>
-            <Route path="/tournaments" element={<Tournaments />} />
             <Route path="/tournaments/create" element={<CreateTournament />} />
             <Route path="/tournaments/:id" element={<TournamentDetail />} />
             <Route path="/tournaments/:id/bracket" element={<BracketPage />} />

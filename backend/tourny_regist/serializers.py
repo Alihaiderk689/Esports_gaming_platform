@@ -1,3 +1,4 @@
+from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -140,10 +141,14 @@ class TournamentApplicationSerializer(serializers.ModelSerializer):
         starts_at = attrs.get('starts_at')
         ends_at = attrs.get('ends_at')
         registration_deadline = attrs.get('registration_deadline')
+        if starts_at and starts_at <= timezone.now():
+            errors['starts_at'] = 'Tournament start date must be in the future.'
         if starts_at and ends_at and ends_at < starts_at:
             errors['ends_at'] = 'End date must be on or after the start date.'
         if starts_at and registration_deadline and registration_deadline > starts_at:
             errors['registration_deadline'] = 'Registration deadline must be before the tournament starts.'
+        if registration_deadline and registration_deadline <= timezone.now():
+            errors['registration_deadline'] = 'Registration deadline must be in the future.'
 
         if errors:
             raise serializers.ValidationError(errors)
@@ -371,9 +376,14 @@ class RegistrationCreateSerializer(serializers.ModelSerializer):
             if tournament.registration_fee and tournament.registration_fee > 0
             else Registration.Status.APPROVED
         )
-        return Registration.objects.create(
-            player=self.context['request'].user, status=status, **validated_data,
-        )
+        try:
+            return Registration.objects.create(
+                player=self.context['request'].user, status=status, **validated_data,
+            )
+        except IntegrityError:
+            # The pre-check in validate() above closes this for the normal case;
+            # this only catches two simultaneous submits racing past that check.
+            raise serializers.ValidationError({'tournament': 'You are already registered for this tournament.'})
 
 
 class RegistrationReviewSerializer(serializers.ModelSerializer):

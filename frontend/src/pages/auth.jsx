@@ -3,7 +3,33 @@ import { useNavigate, useLocation, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/appauth";
 import { api } from "@/lib/api";
-import { Gamepad2, Mail, Lock, User, Eye, EyeOff, ArrowRight, Shield, Swords, CheckCircle2, Loader2 } from "lucide-react";
+import { Gamepad2, Mail, Lock, User, Eye, EyeOff, ArrowRight, Shield, Swords, CheckCircle2, Circle, Loader2 } from "lucide-react";
+
+const NAME_REGEX = /^[A-Za-z]+(?:[ '-][A-Za-z]+)*$/;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function getNameError(value, label) {
+  const trimmed = value.trim();
+  if (!trimmed) return `${label} is required.`;
+  if (trimmed.length < 2 || trimmed.length > 50) return `${label} must be 2–50 characters.`;
+  if (!NAME_REGEX.test(trimmed)) return `${label} can only contain letters, spaces, hyphens, and apostrophes.`;
+  return "";
+}
+
+function getEmailError(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return "Email is required.";
+  if (!EMAIL_REGEX.test(trimmed)) return "Enter a valid email address.";
+  return "";
+}
+
+const PASSWORD_CHECKS = [
+  { key: "length", label: "8+ characters", test: (p) => p.length >= 8 && p.length <= 128 },
+  { key: "upper", label: "Uppercase letter", test: (p) => /[A-Z]/.test(p) },
+  { key: "lower", label: "Lowercase letter", test: (p) => /[a-z]/.test(p) },
+  { key: "number", label: "Number", test: (p) => /[0-9]/.test(p) },
+  { key: "special", label: "Special character", test: (p) => /[^A-Za-z0-9]/.test(p) },
+];
 
 export default function Auth() {
   const { login, register, googleLogin } = useAuth();
@@ -17,7 +43,8 @@ export default function Auth() {
   const [error, setError] = useState("");
   const [info, setInfo] = useState(location.state?.info || "");
   const [justRegistered, setJustRegistered] = useState(false);
-  const [form, setForm] = useState({ full_name: "", email: "", password: "", confirm: "" });
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", password: "", confirm: "" });
+  const [touched, setTouched] = useState({});
   const emptyOrgForm = {
     company_name: "", phone_number: "", address: "",
     cnic_number: "", cnic_document: null,
@@ -29,17 +56,22 @@ export default function Auth() {
   const from = location.state?.from || "/";
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const markTouched = (k) => () => setTouched((t) => ({ ...t, [k]: true }));
   const setOrg = (k) => (e) => setOrgForm((f) => ({ ...f, [k]: e.target.value }));
   const setOrgFile = (k) => (e) => setOrgForm((f) => ({ ...f, [k]: e.target.files?.[0] || null }));
 
   const getPasswordError = (password) => {
-    if (password.length < 8) return "Password must be at least 8 characters.";
-    if (!/[A-Z]/.test(password)) return "Password must include an uppercase letter.";
-    if (!/[a-z]/.test(password)) return "Password must include a lowercase letter.";
-    if (!/[0-9]/.test(password)) return "Password must include a number.";
-    if (!/[^A-Za-z0-9]/.test(password)) return "Password must include a special character.";
-    return "";
+    const failed = PASSWORD_CHECKS.find((c) => !c.test(password));
+    if (!failed) return "";
+    if (password.length > 128) return "Password must be at most 128 characters.";
+    return `Password must include: ${failed.label.toLowerCase()}.`;
   };
+
+  const firstNameError = mode === "signup" ? getNameError(form.first_name, "First name") : "";
+  const lastNameError = mode === "signup" ? getNameError(form.last_name, "Last name") : "";
+  const emailError = getEmailError(form.email);
+  const passwordError = mode === "signup" ? getPasswordError(form.password) : "";
+  const confirmError = mode === "signup" && form.confirm && form.password !== form.confirm ? "Passwords do not match." : "";
 
   const getOrganizerFormError = () => {
     if (!orgForm.company_name.trim()) return "Company / organization name is required.";
@@ -109,13 +141,10 @@ export default function Auth() {
     setError("");
     setInfo("");
     if (mode === "signup") {
-      const pwError = getPasswordError(form.password);
-      if (pwError) {
-        setError(pwError);
-        return;
-      }
-      if (form.password !== form.confirm) {
-        setError("Passwords do not match.");
+      setTouched((t) => ({ ...t, first_name: true, last_name: true, email: true, password: true, confirm: true }));
+      const firstError = firstNameError || lastNameError || emailError || passwordError || confirmError;
+      if (firstError) {
+        setError(firstError);
         return;
       }
       if (role === "organizer") {
@@ -125,21 +154,25 @@ export default function Auth() {
           return;
         }
       }
+    } else {
+      setTouched((t) => ({ ...t, email: true }));
     }
+    const email = form.email.trim().toLowerCase();
+    const first_name = form.first_name.trim();
+    const last_name = form.last_name.trim();
     setLoading(true);
     try {
       if (mode === "login") {
-        const loggedInUser = await login(form.email, form.password);
+        const loggedInUser = await login(email, form.password);
         await routeAfterLogin(loggedInUser);
       } else {
-        const [first_name, ...rest] = form.full_name.trim().split(/\s+/);
-        const last_name = rest.join(" ");
         if (role === "organizer") {
           const fd = new FormData();
           fd.append("first_name", first_name);
           fd.append("last_name", last_name);
-          fd.append("email", form.email);
+          fd.append("email", email);
           fd.append("password", form.password);
+          fd.append("confirm_password", form.confirm);
           fd.append("role", "organizer");
           fd.append("company_name", orgForm.company_name.trim());
           if (orgForm.phone_number.trim()) fd.append("phone_number", orgForm.phone_number.trim());
@@ -160,11 +193,16 @@ export default function Auth() {
           }
           await register(fd, { formData: true });
         } else {
-          await register({ first_name, last_name, email: form.email, password: form.password, role: "user" });
+          await register({
+            first_name, last_name, email,
+            password: form.password, confirm_password: form.confirm,
+            role: "user",
+          });
         }
         setMode("login");
         setForm((f) => ({ ...f, password: "", confirm: "" }));
         setOrgForm(emptyOrgForm);
+        setTouched({});
         setInfo(
           role === "organizer"
             ? "Account created! Check your email to verify it, then sign in. Your organizer application is now under review."
@@ -313,15 +351,44 @@ export default function Auth() {
 
             <form onSubmit={submit} className="space-y-4">
               {mode === "signup" && (
-                <Field icon={User} placeholder="Full name" value={form.full_name} onChange={set("full_name")} required />
+                <div className="grid grid-cols-2 gap-3">
+                  <Field
+                    icon={User}
+                    placeholder="First name"
+                    value={form.first_name}
+                    onChange={set("first_name")}
+                    onBlur={markTouched("first_name")}
+                    error={touched.first_name ? firstNameError : ""}
+                    required
+                  />
+                  <Field
+                    icon={User}
+                    placeholder="Last name"
+                    value={form.last_name}
+                    onChange={set("last_name")}
+                    onBlur={markTouched("last_name")}
+                    error={touched.last_name ? lastNameError : ""}
+                    required
+                  />
+                </div>
               )}
-              <Field icon={Mail} type="email" placeholder="Email address" value={form.email} onChange={set("email")} required />
+              <Field
+                icon={Mail}
+                type="email"
+                placeholder="Email address"
+                value={form.email}
+                onChange={set("email")}
+                onBlur={markTouched("email")}
+                error={touched.email ? emailError : ""}
+                required
+              />
               <Field
                 icon={Lock}
                 type={showPw ? "text" : "password"}
                 placeholder="Password"
                 value={form.password}
                 onChange={set("password")}
+                onBlur={markTouched("password")}
                 required
                 trailing={
                   <button type="button" onClick={() => setShowPw((v) => !v)} className="text-muted-foreground hover:text-primary">
@@ -331,15 +398,15 @@ export default function Auth() {
               />
               {mode === "signup" && (
                 <>
-                  <p className="text-[11px] text-muted-foreground -mt-2 px-1">
-                    At least 8 characters, with uppercase, lowercase, a number and a special character.
-                  </p>
+                  <PasswordChecklist password={form.password} />
                   <Field
                     icon={Lock}
                     type={showPw ? "text" : "password"}
                     placeholder="Confirm password"
                     value={form.confirm}
                     onChange={set("confirm")}
+                    onBlur={markTouched("confirm")}
+                    error={touched.confirm ? confirmError : ""}
                     required
                   />
                 </>
@@ -572,16 +639,37 @@ function RoleCard({ active, onClick, icon: Icon, label, desc }) {
   );
 }
 
-function Field({ icon: Icon, trailing, type = "text", ...props }) {
+function Field({ icon: Icon, trailing, type = "text", error, ...props }) {
   return (
-    <div className="relative">
-      <Icon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-      <input
-        type={type}
-        {...props}
-        className="w-full pl-11 pr-11 py-3 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary focus:neon-border transition-all placeholder:text-muted-foreground/70"
-      />
-      {trailing && <div className="absolute right-3.5 top-1/2 -translate-y-1/2">{trailing}</div>}
+    <div>
+      <div className="relative">
+        <Icon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <input
+          type={type}
+          {...props}
+          className={`w-full pl-11 pr-11 py-3 rounded-xl bg-muted/40 border text-sm outline-none focus:neon-border transition-all placeholder:text-muted-foreground/70 ${
+            error ? "border-destructive focus:border-destructive" : "border-border focus:border-primary"
+          }`}
+        />
+        {trailing && <div className="absolute right-3.5 top-1/2 -translate-y-1/2">{trailing}</div>}
+      </div>
+      {error && <p className="mt-1.5 text-[11px] text-destructive px-1">{error}</p>}
+    </div>
+  );
+}
+
+function PasswordChecklist({ password }) {
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1 -mt-1 px-1">
+      {PASSWORD_CHECKS.map((c) => {
+        const ok = c.test(password);
+        return (
+          <div key={c.key} className={`flex items-center gap-1.5 text-[11px] transition-colors ${ok ? "text-primary" : "text-muted-foreground"}`}>
+            {ok ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <Circle className="w-3 h-3 shrink-0" />}
+            {c.label}
+          </div>
+        );
+      })}
     </div>
   );
 }

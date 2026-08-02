@@ -1,14 +1,22 @@
+import logging
+
+import cloudinary.utils
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core import signing
 from django.db.models import Count
+from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from django.views.decorators.cache import never_cache
+from django.views.decorators.clickjacking import xframe_options_exempt
+from google.auth.exceptions import GoogleAuthError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from rest_framework import filters, generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
@@ -33,9 +41,11 @@ from core.serializers import (
     ResetPasswordSerializer,
     VerifyEmailSerializer,
 )
-from core.tokens import email_verification_token, password_reset_token
+from core.storage import CloudinarySignedStorage
+from core.tokens import email_verification_token, password_reset_token, revoke_all_sessions
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def _players_queryset():
@@ -49,6 +59,40 @@ def _players_queryset():
 @permission_classes([permissions.AllowAny])
 def health_check(request):
     return Response({'status': 'ok'})
+
+
+@never_cache
+@xframe_options_exempt
+def secure_media_view(request):
+    """Resolves a CloudinarySignedStorage link (see core.storage) to the file it
+    points at. Our own signature — checked with a max age — is the first gate:
+    links are only ever handed out by a serializer that has already run its own
+    ownership/staff check, so anyone reaching this view with a valid, unexpired
+    token is already authorized. Once past that gate, this mints a fresh
+    Cloudinary "authenticated" signed URL (Cloudinary itself 401s without a
+    matching signature — verified live) and redirects to it, so Cloudinary's
+    CDN serves the actual bytes instead of proxying them through this server.
+
+    xframe_options_exempt mirrors the previous dev-only media route: the admin
+    UI previews these documents in an <iframe>.
+    """
+    token = request.GET.get('token', '')
+    signer = signing.TimestampSigner(salt=CloudinarySignedStorage.signer_salt)
+    try:
+        public_id = signer.unsign(token, max_age=CloudinarySignedStorage.url_max_age)
+    except signing.SignatureExpired:
+        raise Http404('This link has expired.')
+    except signing.BadSignature:
+        raise Http404('Not found.')
+
+    cloudinary_url, _ = cloudinary.utils.cloudinary_url(
+        public_id,
+        resource_type=CloudinarySignedStorage.resource_type,
+        type=CloudinarySignedStorage.delivery_type,
+        sign_url=True,
+        secure=True,
+    )
+    return HttpResponseRedirect(cloudinary_url)
 
 
 def _decode_uid(uid):
@@ -67,8 +111,22 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        send_verification_email(user)
-        detail = 'Registration successful. Check your email to verify your account.'
+
+        # The account is already committed at this point — an SMTP failure here
+        # (bad credentials, provider outage) must not turn into a 500 that makes
+        # the client think registration itself failed, since retrying would just
+        # hit "email already registered" with no way to recover. Tell them
+        # plainly and let "resend verification" cover it instead.
+        try:
+            send_verification_email(user)
+            detail = 'Registration successful. Check your email to verify your account.'
+        except Exception:
+            logger.exception('Failed to send verification email to user %s', user.pk)
+            detail = (
+                "Registration successful, but we couldn't send the verification email right now. "
+                "Use \"Resend verification\" from the sign-in page once you're ready to verify."
+            )
+
         if hasattr(user, 'organizer_profile'):
             detail += ' Your organizer application is now under review.'
         return Response(
@@ -80,6 +138,18 @@ class RegisterView(generics.CreateAPIView):
 class LoginView(TokenObtainPairView):
     serializer_class = LoginSerializer
     throttle_scope = 'login'
+
+
+class GoogleAuthUnavailable(APIException):
+    """A ValueError from verify_oauth2_token means the token itself is bad
+    (expired, wrong audience, malformed) — a genuine 400. A GoogleAuthError
+    (e.g. TransportError) means we couldn't even reach Google to check —
+    that's not the user's fault, so it gets its own 503 instead of implying
+    their token was invalid."""
+
+    status_code = 503
+    default_detail = 'Could not verify with Google right now. Please try again.'
+    default_code = 'service_unavailable'
 
 
 class GoogleLoginView(APIView):
@@ -98,11 +168,21 @@ class GoogleLoginView(APIView):
             )
         except ValueError:
             raise ValidationError({'id_token': 'Invalid Google token.'})
+        except GoogleAuthError:
+            logger.exception('Failed to reach Google while verifying an id_token')
+            raise GoogleAuthUnavailable()
 
         email = payload.get('email')
         google_id = payload.get('sub')
         if not email or not google_id:
             raise ValidationError({'id_token': 'Google token missing required claims.'})
+        if not payload.get('email_verified'):
+            # Google issues this claim to distinguish "this account controls this
+            # email" from "this email is merely on file" — trusting an unverified
+            # email would let someone log into (or silently create) an account
+            # for an address they don't actually control.
+            raise ValidationError({'id_token': 'Your Google account email is not verified.'})
+        email = email.strip().lower()
 
         user, created = User.objects.get_or_create(
             email=User.objects.normalize_email(email),
@@ -150,12 +230,16 @@ class ForgotPasswordView(APIView):
         email = serializer.validated_data['email']
         user = User.objects.filter(email__iexact=email).first()
         if user:
-            send_password_reset_email(user)
+            try:
+                send_password_reset_email(user)
+            except Exception:
+                logger.exception('Failed to send password reset email to user %s', user.pk)
         return Response({'detail': 'If that email exists, a reset link has been sent.'})
 
 
 class ResetPasswordView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = 'email_action'
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
@@ -169,11 +253,13 @@ class ResetPasswordView(APIView):
 
         user.set_password(data['new_password'])
         user.save(update_fields=['password'])
+        revoke_all_sessions(user)
         return Response({'detail': 'Password has been reset.'})
 
 
 class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = 'email_action'
 
     def get(self, request):
         serializer = VerifyEmailSerializer(data=request.query_params)
@@ -200,7 +286,10 @@ class ResendVerificationView(APIView):
         email = serializer.validated_data['email']
         user = User.objects.filter(email__iexact=email, is_email_verified=False).first()
         if user:
-            send_verification_email(user)
+            try:
+                send_verification_email(user)
+            except Exception:
+                logger.exception('Failed to send verification email to user %s', user.pk)
         return Response({'detail': 'If that email exists and is unverified, a link has been sent.'})
 
 
@@ -226,6 +315,7 @@ class ChangePasswordView(APIView):
 
         user.set_password(data['new_password'])
         user.save(update_fields=['password'])
+        revoke_all_sessions(user)
         return Response({'detail': 'Password changed successfully.'})
 
 

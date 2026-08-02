@@ -94,6 +94,17 @@ class GameApiTests(APITestCase):
         resp = self.client.post('/api/games/', {'name': 'Valorant'})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_create_case_insensitive_duplicate_name_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.post('/api/games/', {'name': 'valorant'})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('name', resp.data)
+
+    def test_patch_own_name_unchanged_not_rejected_as_duplicate(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.patch(f'/api/games/{self.game.pk}/', {'name': 'Valorant', 'genre': 'Tactical Shooter'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+
     def test_logo_url_falls_back_to_cover_image_url(self):
         self.game.cover_image_url = 'https://example.com/valorant.jpg'
         self.game.save()
@@ -141,6 +152,12 @@ class CategoryApiTests(APITestCase):
         resp = self.client.post('/api/games/categories/', {'name': 'Battle Royale'})
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         self.assertEqual(resp.data['slug'], 'battle-royale')
+
+    def test_create_case_insensitive_duplicate_category_rejected(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.post('/api/games/categories/', {'name': 'moba'})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('name', resp.data)
 
     def test_delete_category_forbidden_for_non_admin(self):
         resp = self.client.delete(f'/api/games/categories/{self.category.pk}/')

@@ -1,6 +1,15 @@
 from django.conf import settings
 from django.db import models
 
+from core.storage import CloudinarySignedStorage
+from core.validators import (
+    validate_bank_account_number,
+    validate_cnic_number,
+    validate_document_file,
+    validate_phone_number,
+    validate_pk_mobile_number,
+)
+
 
 class Organizer(models.Model):
     class Status(models.TextChoices):
@@ -17,18 +26,24 @@ class Organizer(models.Model):
     )
     company_name = models.CharField(max_length=200)
     company_registration_number = models.CharField(max_length=100, blank=True)
-    phone_number = models.CharField(max_length=30, blank=True)
+    phone_number = models.CharField(max_length=30, blank=True, validators=[validate_phone_number])
     address = models.CharField(max_length=255, blank=True)
 
-    cnic_number = models.CharField(max_length=20, blank=True)
-    cnic_document = models.FileField(upload_to='organizer/cnic/%Y/%m/', blank=True, null=True)
-    company_document = models.FileField(upload_to='organizer/company/%Y/%m/', blank=True, null=True)
+    cnic_number = models.CharField(max_length=20, blank=True, validators=[validate_cnic_number])
+    cnic_document = models.FileField(
+        upload_to='organizer/cnic/%Y/%m/', storage=CloudinarySignedStorage(),
+        validators=[validate_document_file], blank=True, null=True,
+    )
+    company_document = models.FileField(
+        upload_to='organizer/company/%Y/%m/', storage=CloudinarySignedStorage(),
+        validators=[validate_document_file], blank=True, null=True,
+    )
 
     payout_method = models.CharField(max_length=10, choices=PayoutMethod.choices, blank=True)
-    jazzcash_number = models.CharField(max_length=30, blank=True)
+    jazzcash_number = models.CharField(max_length=30, blank=True, validators=[validate_pk_mobile_number])
     bank_name = models.CharField(max_length=150, blank=True)
     bank_account_title = models.CharField(max_length=150, blank=True)
-    bank_account_number = models.CharField(max_length=50, blank=True)
+    bank_account_number = models.CharField(max_length=50, blank=True, validators=[validate_bank_account_number])
 
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     rejection_reason = models.TextField(blank=True)

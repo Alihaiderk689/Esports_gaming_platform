@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 
 from organizer.models import Organizer
 from organizer.serializers import (
+    AdminOrganizerListSerializer,
     AdminOrganizerSerializer,
     AdminOrganizerUpdateSerializer,
     CnicUploadSerializer,
@@ -96,7 +97,7 @@ class OrganizerDashboardView(APIView):
 
 
 class AdminOrganizerListView(generics.ListAPIView):
-    serializer_class = AdminOrganizerSerializer
+    serializer_class = AdminOrganizerListSerializer
     permission_classes = [permissions.IsAdminUser]
     queryset = Organizer.objects.select_related('user').order_by('-created_at')
 

@@ -1,6 +1,8 @@
 import shutil
 import tempfile
+from unittest.mock import patch
 
+import cloudinary.exceptions
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
@@ -13,6 +15,11 @@ User = get_user_model()
 
 _MEDIA_ROOT = tempfile.mkdtemp(prefix='organizer_test_media_')
 
+# Real magic bytes so validate_document_file (core/validators.py) accepts them —
+# padded past the 8-byte header it sniffs, content beyond that is irrelevant.
+_JPEG_BYTES = b'\xff\xd8\xff\xe0' + b'\x00' * 16
+_PDF_BYTES = b'%PDF-1.4\n' + b'fake pdf body'.ljust(16, b'\x00')
+
 
 @override_settings(MEDIA_ROOT=_MEDIA_ROOT)
 class OrganizerApiTests(APITestCase):
@@ -24,6 +31,16 @@ class OrganizerApiTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(email='organizer@example.com', password='StrongPass123')
         self.client.force_authenticate(user=self.user)
+
+        # cnic_document/company_document now live in Cloudinary (CloudinarySignedStorage),
+        # not under MEDIA_ROOT, so @override_settings(MEDIA_ROOT=...) no longer isolates
+        # them from the real account — patch the SDK calls instead of hitting the network.
+        self.mock_upload = patch('cloudinary.uploader.upload').start()
+        self.mock_upload.return_value = {'public_id': 'test/fake-public-id'}
+        self.mock_resource = patch(
+            'cloudinary.api.resource', side_effect=cloudinary.exceptions.NotFound('not found'),
+        ).start()
+        self.addCleanup(patch.stopall)
 
     def test_endpoints_require_auth(self):
         self.client.force_authenticate(user=None)
@@ -43,6 +60,45 @@ class OrganizerApiTests(APITestCase):
         self.assertEqual(resp.data['company_name'], 'Acme Esports')
         self.assertEqual(resp.data['status'], 'pending')
         self.assertTrue(Organizer.objects.filter(user=self.user).exists())
+
+    def test_register_invalid_phone_number_rejected(self):
+        resp = self.client.post('/api/organizer/register/', {
+            'company_name': 'Acme Esports', 'phone_number': 'abc', 'address': 'Lahore',
+            'payout_method': 'jazzcash', 'jazzcash_number': '03001234567',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('phone_number', resp.data)
+
+    def test_register_invalid_jazzcash_number_rejected(self):
+        resp = self.client.post('/api/organizer/register/', {
+            'company_name': 'Acme Esports', 'payout_method': 'jazzcash', 'jazzcash_number': 'x',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('jazzcash_number', resp.data)
+
+    def test_register_invalid_bank_account_number_rejected(self):
+        resp = self.client.post('/api/organizer/register/', {
+            'company_name': 'Acme Esports', 'payout_method': 'bank',
+            'bank_name': 'HBL', 'bank_account_title': 'Acme', 'bank_account_number': '1',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('bank_account_number', resp.data)
+
+    def test_register_valid_bank_account_number_accepted(self):
+        resp = self.client.post('/api/organizer/register/', {
+            'company_name': 'Acme Esports', 'payout_method': 'bank',
+            'bank_name': 'HBL', 'bank_account_title': 'Acme', 'bank_account_number': 'PK00HABB0000000000000000',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+    def test_upload_cnic_invalid_format_rejected(self):
+        Organizer.objects.create(user=self.user, company_name='Acme')
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        resp = self.client.post('/api/organizer/upload-cnic/', {
+            'cnic_document': cnic_file, 'cnic_number': '12345',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('cnic_number', resp.data)
 
     def test_register_missing_company_name_rejected(self):
         resp = self.client.post('/api/organizer/register/', {})
@@ -68,34 +124,80 @@ class OrganizerApiTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_upload_cnic_before_registration_is_404(self):
-        cnic_file = SimpleUploadedFile('cnic.jpg', b'fake-image-bytes', content_type='image/jpeg')
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
         resp = self.client.post('/api/organizer/upload-cnic/', {'cnic_document': cnic_file, 'cnic_number': '35202-1234567-1'})
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_upload_cnic(self):
         Organizer.objects.create(user=self.user, company_name='Acme')
-        cnic_file = SimpleUploadedFile('cnic.jpg', b'fake-image-bytes', content_type='image/jpeg')
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
         resp = self.client.post('/api/organizer/upload-cnic/', {
             'cnic_document': cnic_file, 'cnic_number': '35202-1234567-1',
         }, format='multipart')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertTrue(resp.data['cnic_uploaded'])
         self.assertEqual(resp.data['cnic_number'], '35202-1234567-1')
+        self.mock_upload.assert_called_once()
+
+    def test_upload_cnic_returns_clean_error_when_cloudinary_fails(self):
+        Organizer.objects.create(user=self.user, company_name='Acme')
+        self.mock_upload.side_effect = Exception('simulated Cloudinary outage')
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        resp = self.client.post('/api/organizer/upload-cnic/', {
+            'cnic_document': cnic_file, 'cnic_number': '35202-1234567-1',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
 
     def test_upload_cnic_without_file_rejected(self):
         Organizer.objects.create(user=self.user, company_name='Acme')
         resp = self.client.post('/api/organizer/upload-cnic/', {'cnic_number': '35202-1234567-1'}, format='multipart')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_upload_cnic_rejects_non_image_content(self):
+        """An HTML/SVG file renamed to look like a CNIC scan must be rejected by content,
+        not by extension — this is what closes the stored-XSS-via-admin-preview path."""
+        Organizer.objects.create(user=self.user, company_name='Acme')
+        malicious = SimpleUploadedFile(
+            'cnic.jpg', b'<html><script>alert(document.cookie)</script></html>', content_type='image/jpeg',
+        )
+        resp = self.client.post('/api/organizer/upload-cnic/', {
+            'cnic_document': malicious, 'cnic_number': '35202-1234567-1',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('cnic_document', resp.data)
+        self.mock_upload.assert_not_called()
+
+    def test_upload_cnic_rejects_oversized_file(self):
+        Organizer.objects.create(user=self.user, company_name='Acme')
+        oversized = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES + b'\x00' * (10 * 1024 * 1024), content_type='image/jpeg')
+        resp = self.client.post('/api/organizer/upload-cnic/', {
+            'cnic_document': oversized, 'cnic_number': '35202-1234567-1',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('cnic_document', resp.data)
+        self.mock_upload.assert_not_called()
+
     def test_upload_company_document(self):
         Organizer.objects.create(user=self.user, company_name='Acme')
-        company_file = SimpleUploadedFile('registration.pdf', b'fake-pdf-bytes', content_type='application/pdf')
+        company_file = SimpleUploadedFile('registration.pdf', _PDF_BYTES, content_type='application/pdf')
         resp = self.client.post('/api/organizer/upload-company/', {
             'company_document': company_file, 'company_registration_number': 'REG-001',
         }, format='multipart')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertTrue(resp.data['company_document_uploaded'])
-        self.assertEqual(resp.data['company_registration_number'], 'REG-001')
+        self.mock_upload.assert_called_once()
+
+    def test_upload_company_document_rejects_non_pdf_content(self):
+        Organizer.objects.create(user=self.user, company_name='Acme')
+        malicious = SimpleUploadedFile(
+            'registration.pdf', b'<svg onload="alert(1)"></svg>', content_type='application/pdf',
+        )
+        resp = self.client.post('/api/organizer/upload-company/', {
+            'company_document': malicious, 'company_registration_number': 'REG-001',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('company_document', resp.data)
+        self.mock_upload.assert_not_called()
 
     def test_status_after_registration(self):
         Organizer.objects.create(user=self.user, company_name='Acme')

@@ -113,12 +113,23 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_THROTTLE_CLASSES': (
+        # ScopedRateThrottle only applies to views that opt in with throttle_scope
+        # (login/register/email_action/chat/team_join below); User/AnonRateThrottle
+        # apply globally so no endpoint is left completely unthrottled. Rates are
+        # deliberately generous — this is a baseline ceiling against scripted abuse,
+        # not meant to constrain normal interactive use.
         'rest_framework.throttling.ScopedRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.AnonRateThrottle',
     ),
     'DEFAULT_THROTTLE_RATES': {
         'login': '10/min',
         'register': '20/hour',
         'email_action': '5/hour',
+        'chat': '20/min',
+        'team_join': '20/min',
+        'user': '1000/min',
+        'anon': '200/min',
     },
 }
 
@@ -195,6 +206,9 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
     },
     {
+        'NAME': 'core.validators.MaximumLengthValidator',
+    },
+    {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
     },
     {
@@ -249,6 +263,11 @@ LOGGING = {
     },
     'loggers': {
         'rag_chat': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'core': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

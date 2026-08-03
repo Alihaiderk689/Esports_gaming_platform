@@ -27,6 +27,7 @@ class PlayerDashboardView(APIView):
         upcoming_matches = Match.objects.filter(
             Q(player1=user) | Q(player2=user), status=Match.Status.READY,
         ).select_related('tournament', 'player1', 'player2')
+        wins = Tournament.objects.filter(champion=user).select_related('game').order_by('-champion_declared_at')
         organizer_profile = getattr(user, 'organizer_profile', None)
 
         return Response({
@@ -51,6 +52,17 @@ class PlayerDashboardView(APIView):
                     ),
                 }
                 for match in upcoming_matches
+            ],
+            'wins': [
+                {
+                    'id': tournament.pk,
+                    'name': tournament.name,
+                    'game': tournament.game.name,
+                    'prize_pool': str(tournament.prize_pool),
+                    'champion_declared_at': tournament.champion_declared_at,
+                    'seen': tournament.champion_seen_at is not None,
+                }
+                for tournament in wins
             ],
             'is_organizer': organizer_profile is not None,
             'organizer_status': organizer_profile.status if organizer_profile else None,

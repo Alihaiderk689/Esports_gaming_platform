@@ -9,6 +9,7 @@ urlpatterns = [
     path('tournaments/<int:pk>/publish/', views.TournamentPublishView.as_view()),
     path('tournaments/<int:pk>/announcements/', views.TournamentAnnouncementsView.as_view()),
     path('announcements/<int:pk>/', views.AnnouncementDeleteView.as_view()),
+    path('tournaments/<int:pk>/champion-seen/', views.TournamentChampionSeenView.as_view()),
 
     path('admin/tournaments/', views.AdminTournamentListView.as_view()),
     path('admin/tournaments/<int:pk>/', views.AdminTournamentDetailView.as_view()),

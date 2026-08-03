@@ -6,6 +6,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tourny_regist.emails import send_announcement_emails
 from tourny_regist.models import Announcement, Registration, Team, TeamMembership, Tournament
 from tourny_regist.permissions import IsApprovedOrganizer, IsPublicOrOwner, IsTournamentStaffOrAdmin
 from tourny_regist.serializers import (
@@ -110,6 +111,7 @@ class TournamentAnnouncementsView(generics.ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         announcement = serializer.save(tournament=tournament, author=request.user)
+        send_announcement_emails(tournament, announcement)
         return Response(AnnouncementSerializer(announcement).data, status=status.HTTP_201_CREATED)
 
 
@@ -120,6 +122,19 @@ class AnnouncementDeleteView(APIView):
         announcement = get_object_or_404(Announcement.objects.select_related('tournament'), pk=pk)
         self.check_object_permissions(request, announcement.tournament)
         announcement.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TournamentChampionSeenView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        tournament = get_object_or_404(Tournament, pk=pk)
+        if tournament.champion_id != request.user.pk:
+            raise PermissionDenied('You are not the champion of this tournament.')
+        if tournament.champion_seen_at is None:
+            tournament.champion_seen_at = timezone.now()
+            tournament.save(update_fields=['champion_seen_at'])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

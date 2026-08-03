@@ -8,6 +8,7 @@ from brackets.models import Bracket, Match
 from brackets.serializers import BracketSerializer, MatchResultSerializer, MatchSerializer
 from brackets.services import (
     complete_match,
+    finalize_tournament_champion,
     generate_bracket,
     generate_double_elimination_bracket,
     generate_group_playoff_bracket,
@@ -100,6 +101,7 @@ class MatchResultView(APIView):
         winner_id = serializer.validated_data['winner']
         winner = match.player1 if match.player1_id == winner_id else match.player2
         complete_match(match, winner, serializer.validated_data.get('score', ''))
+        finalize_tournament_champion(match.tournament)
 
         return Response(MatchSerializer(match).data)
 

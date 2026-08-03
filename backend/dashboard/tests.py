@@ -114,10 +114,11 @@ class DashboardApiTests(APITestCase):
         self.assertEqual(resp.data['total_registrations'], 4)
         self.assertEqual(resp.data['total_partners'], 2)
 
-    def test_stats_requires_auth(self):
+    def test_stats_accessible_without_auth(self):
+        # PlatformStatsView is deliberately AllowAny — public landing-page stats.
         self.client.force_authenticate(user=None)
         resp = self.client.get('/api/dashboard/stats/')
-        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
     def test_stats(self):
         resp = self.client.get('/api/dashboard/stats/')

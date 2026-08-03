@@ -19,10 +19,14 @@ class PartnerApiTests(APITestCase):
     def _results(self, resp):
         return resp.data['results'] if isinstance(resp.data, dict) and 'results' in resp.data else resp.data
 
-    def test_list_requires_auth(self):
+    def test_list_accessible_without_auth(self):
+        # PartnerListCreateView uses IsAdminOrReadOnly — the partner list is
+        # public, only writes require staff.
         self.client.force_authenticate(user=None)
         resp = self.client.get('/api/partners/')
-        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        names = {p['name'] for p in self._results(resp)}
+        self.assertIn('Red Bull', names)
 
     def test_list_partners(self):
         resp = self.client.get('/api/partners/')

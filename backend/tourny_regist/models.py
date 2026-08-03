@@ -37,6 +37,19 @@ class Tournament(models.Model):
         null=True, blank=True, on_delete=models.SET_NULL,
     )
 
+    # Set once by brackets.services.finalize_tournament_champion when the
+    # deciding match (or, for round robin/Swiss, the final round) completes —
+    # see that function for the per-format definition of "decided". Left null
+    # otherwise, including for tournaments that never generate a bracket.
+    champion = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='tournament_wins',
+        null=True, blank=True, on_delete=models.SET_NULL,
+    )
+    champion_declared_at = models.DateTimeField(null=True, blank=True)
+    # Set when the champion dismisses the one-time "Congratulations" reveal on
+    # their dashboard, so it doesn't pop up again on every subsequent login.
+    champion_seen_at = models.DateTimeField(null=True, blank=True)
+
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     rejection_reason = models.TextField(blank=True)
     is_published = models.BooleanField(default=False)

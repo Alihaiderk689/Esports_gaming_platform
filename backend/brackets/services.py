@@ -1,5 +1,6 @@
 import math
 
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from brackets.models import Bracket, Match
@@ -450,3 +451,67 @@ def generate_group_playoff_bracket_phase2(bracket):
 
     _build_single_elim(bracket, tournament, qualifiers, bracket_side=Match.Side.WINNERS)
     return bracket
+
+
+def get_tournament_champion(tournament):
+    """Return the User who has won `tournament` outright, or None if its bracket
+    doesn't exist yet or isn't decided yet. "Decided" depends on format:
+    - single elimination / group+playoff (post phase-2): the one match with no
+      next_match — the root of the elimination tree — is COMPLETED.
+    - double elimination / 3-game guarantee: the grand final match is COMPLETED.
+    - round robin: every match is COMPLETED (round robin schedules every round
+      upfront — see _round_robin_rounds — so "all done" is a genuine finish,
+      not just the end of one round); champion is the top standings entry.
+    - swiss: the bracket's final round (bracket.total_rounds) exists and every
+      match in it is COMPLETED; champion is the top standings entry.
+    """
+    bracket = getattr(tournament, 'bracket', None)
+    if bracket is None:
+        return None
+
+    if bracket.format in (Bracket.Format.SINGLE, Bracket.Format.GROUP_PLAYOFF):
+        final_match = Match.objects.filter(
+            bracket=bracket, bracket_side=Match.Side.WINNERS, next_match__isnull=True,
+        ).first()
+        return final_match.winner if final_match and final_match.status == Match.Status.COMPLETED else None
+
+    if bracket.format in (Bracket.Format.DOUBLE, Bracket.Format.GUARANTEE3):
+        grand_final = Match.objects.filter(bracket=bracket, bracket_side=Match.Side.GRAND_FINAL).first()
+        return grand_final.winner if grand_final and grand_final.status == Match.Status.COMPLETED else None
+
+    if bracket.format == Bracket.Format.ROUND_ROBIN:
+        matches = Match.objects.filter(bracket=bracket)
+        if not matches.exists() or matches.exclude(status=Match.Status.COMPLETED).exists():
+            return None
+        ranked = standings(tournament)
+        return ranked[0]['player'] if ranked else None
+
+    if bracket.format == Bracket.Format.SWISS:
+        final_round = Match.objects.filter(bracket=bracket, round_number=bracket.total_rounds)
+        if not final_round.exists() or final_round.exclude(status=Match.Status.COMPLETED).exists():
+            return None
+        ranked = standings(tournament)
+        return ranked[0]['player'] if ranked else None
+
+    return None
+
+
+def finalize_tournament_champion(tournament):
+    """Persist the tournament's champion (idempotent — a champion, once set, is
+    never recomputed or overwritten) and send the win email the first time it's
+    decided. Call this after every match result submission; it's a no-op for
+    every call that doesn't happen to be the tournament-deciding one."""
+    if tournament.champion_id:
+        return tournament.champion
+
+    champion = get_tournament_champion(tournament)
+    if champion is None:
+        return None
+
+    tournament.champion = champion
+    tournament.champion_declared_at = timezone.now()
+    tournament.save(update_fields=['champion', 'champion_declared_at'])
+
+    from tourny_regist.emails import send_tournament_win_email
+    send_tournament_win_email(tournament, champion)
+    return champion

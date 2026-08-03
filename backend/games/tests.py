@@ -38,10 +38,15 @@ class GameApiTests(APITestCase):
         self.game = Game.objects.create(name='Valorant', genre='FPS', platform='PC')
         self.client.force_authenticate(user=self.user)
 
-    def test_list_requires_auth(self):
+    def test_list_accessible_without_auth(self):
+        # GameListView uses IsAdminOrReadOnly — the game catalog is public,
+        # only writes require staff.
         self.client.force_authenticate(user=None)
         resp = self.client.get('/api/games/')
-        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        results = resp.data['results'] if isinstance(resp.data, dict) and 'results' in resp.data else resp.data
+        names = {g['name'] for g in results}
+        self.assertIn('Valorant', names)
 
     def test_list_games(self):
         resp = self.client.get('/api/games/')

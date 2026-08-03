@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
+import { formatMoney } from "@/lib/tournamentFormat";
 
 const PLAYER_TILES = [
   { key: "followers_count", label: "Followers", icon: Users },
@@ -41,12 +42,50 @@ function StatTiles({ tiles, data }) {
   );
 }
 
+function ChampionModal({ win, onDismiss }) {
+  const [dismissing, setDismissing] = useState(false);
+
+  const handleDismiss = async () => {
+    setDismissing(true);
+    try {
+      await api.post(`/api/tournaments/${win.id}/champion-seen/`);
+    } catch {
+      /* best-effort — still close the modal client-side either way */
+    }
+    onDismiss(win.id);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm grid place-items-center p-4">
+      <div className="glass rounded-2xl border border-primary/40 neon-border max-w-md w-full p-8 text-center space-y-4">
+        <div className="w-16 h-16 rounded-full bg-primary/10 grid place-items-center mx-auto">
+          <Trophy className="w-8 h-8 text-primary" />
+        </div>
+        <h2 className="font-display font-extrabold text-2xl gradient-text">Congratulations!</h2>
+        <p className="text-sm text-muted-foreground">
+          You won <span className="font-heading font-bold text-foreground">{win.name}</span>
+          {Number(win.prize_pool) > 0 ? ` — a prize pool of ${formatMoney(win.prize_pool)}!` : "!"}
+        </p>
+        <button
+          type="button"
+          onClick={handleDismiss}
+          disabled={dismissing}
+          className="w-full py-3 rounded-xl font-heading font-bold bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow disabled:opacity-60"
+        >
+          Awesome!
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [player, setPlayer] = useState(null);
   const [organizer, setOrganizer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [activeWin, setActiveWin] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -54,6 +93,7 @@ export default function Dashboard() {
       .get("/api/dashboard/player/")
       .then(async (data) => {
         setPlayer(data);
+        setActiveWin(data.wins?.find((w) => !w.seen) || null);
         if (data.is_organizer) {
           try {
             setOrganizer(await api.get("/api/dashboard/organizer/"));
@@ -65,6 +105,15 @@ export default function Dashboard() {
       .catch((e) => setError(e.message || "Could not load your dashboard."))
       .finally(() => setLoading(false));
   }, []);
+
+  const dismissWin = (id) => {
+    setPlayer((p) => ({ ...p, wins: p.wins.map((w) => (w.id === id ? { ...w, seen: true } : w)) }));
+    setActiveWin((current) => {
+      if (current?.id !== id) return current;
+      const next = player?.wins?.find((w) => !w.seen && w.id !== id);
+      return next || null;
+    });
+  };
 
   if (loading) {
     return (
@@ -88,12 +137,40 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-10 sm:py-14 space-y-10">
+      {activeWin && <ChampionModal win={activeWin} onDismiss={dismissWin} />}
+
       <div>
         <h1 className="font-display font-extrabold text-3xl gradient-text mb-1">Welcome back, {name}</h1>
         <p className="text-sm text-muted-foreground">Here's what's happening with your account.</p>
       </div>
 
       <StatTiles tiles={PLAYER_TILES} data={player} />
+
+      {player.wins.length > 0 && (
+        <div>
+          <h2 className="font-heading font-bold text-sm uppercase tracking-wider text-muted-foreground mb-4">
+            Tournament wins
+          </h2>
+          <div className="space-y-2">
+            {player.wins.map((w) => (
+              <Link
+                key={w.id}
+                to={`/tournaments/${w.id}`}
+                className="flex items-center justify-between gap-3 glass rounded-xl border border-primary/30 px-4 py-3 hover:border-primary/60 transition-colors"
+              >
+                <div className="flex items-center gap-2 text-sm min-w-0">
+                  <Trophy className="w-4 h-4 text-primary shrink-0" />
+                  <span className="font-heading font-semibold truncate">{w.name}</span>
+                  <span className="text-muted-foreground truncate">· {w.game}</span>
+                </div>
+                {Number(w.prize_pool) > 0 && (
+                  <span className="text-xs text-primary font-semibold shrink-0">{formatMoney(w.prize_pool)}</span>
+                )}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className="font-heading font-bold text-sm uppercase tracking-wider text-muted-foreground mb-4">

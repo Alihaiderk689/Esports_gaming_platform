@@ -3,7 +3,7 @@ import { useNavigate, useLocation, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/appauth";
 import { api } from "@/lib/api";
-import { Gamepad2, Mail, Lock, User, Eye, EyeOff, ArrowRight, Shield, Swords, CheckCircle2, Circle, Loader2 } from "lucide-react";
+import { Gamepad2, Mail, Lock, User, Eye, EyeOff, ArrowRight, ArrowLeft, Shield, Swords, CheckCircle2, Circle, Loader2 } from "lucide-react";
 
 const NAME_REGEX = /^[A-Za-z]+(?:[ '-][A-Za-z]+)*$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -44,7 +44,8 @@ export default function Auth() {
   const [info, setInfo] = useState(location.state?.info || "");
   const [justRegistered, setJustRegistered] = useState(false);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", password: "", confirm: "" });
-  const [touched, setTouched] = useState({});
+  const [submitted, setSubmitted] = useState(false);
+  const [orgStep, setOrgStep] = useState(1); // 1: account details, 2: organizer application
   const emptyOrgForm = {
     company_name: "", phone_number: "", address: "",
     cnic_number: "", cnic_document: null,
@@ -56,7 +57,6 @@ export default function Auth() {
   const from = location.state?.from || "/";
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  const markTouched = (k) => () => setTouched((t) => ({ ...t, [k]: true }));
   const setOrg = (k) => (e) => setOrgForm((f) => ({ ...f, [k]: e.target.value }));
   const setOrgFile = (k) => (e) => setOrgForm((f) => ({ ...f, [k]: e.target.files?.[0] || null }));
 
@@ -73,17 +73,28 @@ export default function Auth() {
   const passwordError = mode === "signup" ? getPasswordError(form.password) : "";
   const confirmError = mode === "signup" && form.confirm && form.password !== form.confirm ? "Passwords do not match." : "";
 
-  const getOrganizerFormError = () => {
-    if (!orgForm.company_name.trim()) return "Company / organization name is required.";
-    if (!orgForm.cnic_document) return "Please upload your CNIC document.";
-    if (!orgForm.company_document) return "Please upload a company document.";
-    if (orgForm.payout_method === "jazzcash") {
-      if (!orgForm.jazzcash_number.trim()) return "JazzCash number is required.";
-    } else if (!orgForm.bank_name.trim() || !orgForm.bank_account_title.trim() || !orgForm.bank_account_number.trim()) {
-      return "Bank name, account title, and account number are required.";
-    }
-    return "";
-  };
+  const isOrgStep2 = mode === "signup" && role === "organizer" && orgStep === 2;
+  const showAccountFields = !isOrgStep2;
+
+  const companyNameError = !orgForm.company_name.trim() ? "Company / organization name is required." : "";
+  const cnicDocumentError = !orgForm.cnic_document ? "Please upload your CNIC document." : "";
+  const companyDocumentError = !orgForm.company_document ? "Please upload a company document." : "";
+  const jazzcashNumberError =
+    orgForm.payout_method === "jazzcash" && !orgForm.jazzcash_number.trim() ? "JazzCash number is required." : "";
+  const bankNameError = orgForm.payout_method === "bank" && !orgForm.bank_name.trim() ? "Bank name is required." : "";
+  const bankAccountTitleError =
+    orgForm.payout_method === "bank" && !orgForm.bank_account_title.trim() ? "Account title is required." : "";
+  const bankAccountNumberError =
+    orgForm.payout_method === "bank" && !orgForm.bank_account_number.trim() ? "Account number is required." : "";
+
+  const orgInputClass = (hasError) =>
+    `w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70 ${
+      hasError ? "border-destructive focus:border-destructive" : "border-border"
+    }`;
+
+  const getOrganizerFormError = () =>
+    companyNameError || cnicDocumentError || companyDocumentError || jazzcashNumberError ||
+    bankNameError || bankAccountTitleError || bankAccountNumberError;
 
   // Organizers (any application status) always land on their dashboard, never the
   // public landing page — only a non-organizer's own redirect-origin ("from") wins.
@@ -140,22 +151,26 @@ export default function Auth() {
     e.preventDefault();
     setError("");
     setInfo("");
+    setSubmitted(true);
     if (mode === "signup") {
-      setTouched((t) => ({ ...t, first_name: true, last_name: true, email: true, password: true, confirm: true }));
       const firstError = firstNameError || lastNameError || emailError || passwordError || confirmError;
       if (firstError) {
         setError(firstError);
         return;
       }
       if (role === "organizer") {
+        if (orgStep === 1) {
+          setError("");
+          setSubmitted(false);
+          setOrgStep(2);
+          return;
+        }
         const orgError = getOrganizerFormError();
         if (orgError) {
           setError(orgError);
           return;
         }
       }
-    } else {
-      setTouched((t) => ({ ...t, email: true }));
     }
     const email = form.email.trim().toLowerCase();
     const first_name = form.first_name.trim();
@@ -202,7 +217,8 @@ export default function Auth() {
         setMode("login");
         setForm((f) => ({ ...f, password: "", confirm: "" }));
         setOrgForm(emptyOrgForm);
-        setTouched({});
+        setSubmitted(false);
+        setOrgStep(1);
         setInfo(
           role === "organizer"
             ? "Account created! Check your email to verify it, then sign in. Your organizer application is now under review."
@@ -309,13 +325,13 @@ export default function Auth() {
                 transition={{ type: "spring", damping: 26, stiffness: 300 }}
               />
               <button
-                onClick={() => { setMode("login"); setError(""); setInfo(""); }}
+                onClick={() => { setMode("login"); setError(""); setInfo(""); setOrgStep(1); setSubmitted(false); }}
                 className={`relative flex-1 py-2.5 text-sm font-heading font-bold transition-colors ${mode === "login" ? "text-primary-foreground" : "text-muted-foreground"}`}
               >
                 Sign In
               </button>
               <button
-                onClick={() => { setMode("signup"); setError(""); setInfo(""); }}
+                onClick={() => { setMode("signup"); setError(""); setInfo(""); setOrgStep(1); setSubmitted(false); }}
                 className={`relative flex-1 py-2.5 text-sm font-heading font-bold transition-colors ${mode === "signup" ? "text-primary-foreground" : "text-muted-foreground"}`}
               >
                 Sign Up
@@ -331,15 +347,20 @@ export default function Auth() {
 
             {/* Role selector for signup */}
             <AnimatePresence>
-              {mode === "signup" && (
+              {mode === "signup" && showAccountFields && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
                   exit={{ opacity: 0, height: 0 }}
                   className="overflow-hidden mb-5"
                 >
-                  <div className="text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground mb-2">
-                    I am a…
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground">
+                      I am a…
+                    </div>
+                    {role === "organizer" && (
+                      <div className="text-[11px] font-heading font-semibold text-muted-foreground">Step 1 of 2</div>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <RoleCard active={role === "user"} onClick={() => setRole("user")} icon={Gamepad2} label="Player" desc="Compete & follow" />
@@ -349,82 +370,86 @@ export default function Auth() {
               )}
             </AnimatePresence>
 
-            <form onSubmit={submit} className="space-y-4">
-              {mode === "signup" && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field
-                    icon={User}
-                    placeholder="First name"
-                    value={form.first_name}
-                    onChange={set("first_name")}
-                    onBlur={markTouched("first_name")}
-                    error={touched.first_name ? firstNameError : ""}
-                    required
-                  />
-                  <Field
-                    icon={User}
-                    placeholder="Last name"
-                    value={form.last_name}
-                    onChange={set("last_name")}
-                    onBlur={markTouched("last_name")}
-                    error={touched.last_name ? lastNameError : ""}
-                    required
-                  />
-                </div>
-              )}
-              <Field
-                icon={Mail}
-                type="email"
-                placeholder="Email address"
-                value={form.email}
-                onChange={set("email")}
-                onBlur={markTouched("email")}
-                error={touched.email ? emailError : ""}
-                required
-              />
-              <Field
-                icon={Lock}
-                type={showPw ? "text" : "password"}
-                placeholder="Password"
-                value={form.password}
-                onChange={set("password")}
-                onBlur={markTouched("password")}
-                required
-                trailing={
-                  <button type="button" onClick={() => setShowPw((v) => !v)} className="text-muted-foreground hover:text-primary">
-                    {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                }
-              />
-              {mode === "signup" && (
+            <form onSubmit={submit} noValidate className="space-y-4">
+              {showAccountFields && (
                 <>
-                  <PasswordChecklist password={form.password} />
+                  {mode === "signup" && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field
+                        icon={User}
+                        placeholder="First name"
+                        value={form.first_name}
+                        onChange={set("first_name")}
+                        error={submitted ? firstNameError : ""}
+                        required
+                      />
+                      <Field
+                        icon={User}
+                        placeholder="Last name"
+                        value={form.last_name}
+                        onChange={set("last_name")}
+                        error={submitted ? lastNameError : ""}
+                        required
+                      />
+                    </div>
+                  )}
+                  <Field
+                    icon={Mail}
+                    type="email"
+                    placeholder="Email address"
+                    value={form.email}
+                    onChange={set("email")}
+                    error={submitted ? emailError : ""}
+                    required
+                  />
                   <Field
                     icon={Lock}
                     type={showPw ? "text" : "password"}
-                    placeholder="Confirm password"
-                    value={form.confirm}
-                    onChange={set("confirm")}
-                    onBlur={markTouched("confirm")}
-                    error={touched.confirm ? confirmError : ""}
+                    placeholder="Password"
+                    value={form.password}
+                    onChange={set("password")}
                     required
+                    trailing={
+                      <button type="button" onClick={() => setShowPw((v) => !v)} className="text-muted-foreground hover:text-primary">
+                        {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    }
                   />
+                  {mode === "signup" && (
+                    <>
+                      <PasswordChecklist password={form.password} />
+                      <Field
+                        icon={Lock}
+                        type={showPw ? "text" : "password"}
+                        placeholder="Confirm password"
+                        value={form.confirm}
+                        onChange={set("confirm")}
+                        error={submitted ? confirmError : ""}
+                        required
+                      />
+                    </>
+                  )}
                 </>
               )}
 
-              {mode === "signup" && role === "organizer" && (
-                <div className="space-y-4 pt-4 border-t border-border/60">
+              {isOrgStep2 && (
+                <div className="space-y-4">
                   <div className="text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground">
-                    Organizer application
+                    Organizer application <span className="text-muted-foreground/60 normal-case font-normal">— step 2 of 2</span>
                   </div>
 
-                  <input
-                    required
-                    value={orgForm.company_name}
-                    onChange={setOrg("company_name")}
-                    placeholder="Company / organization name"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
-                  />
+                  <div>
+                    <input
+                      required
+                      value={orgForm.company_name}
+                      onChange={setOrg("company_name")}
+                      placeholder="Company / organization name"
+                      className={orgInputClass(submitted && companyNameError)}
+                    />
+                    {submitted && companyNameError && (
+                      <p className="mt-1.5 text-[11px] text-destructive px-1">{companyNameError}</p>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <input
                       value={orgForm.phone_number}
@@ -456,6 +481,9 @@ export default function Auth() {
                       onChange={setOrgFile("cnic_document")}
                       className="w-full text-xs text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-primary file:text-primary-foreground file:text-xs file:font-heading file:font-semibold"
                     />
+                    {submitted && cnicDocumentError && (
+                      <p className="text-[11px] text-destructive px-1">{cnicDocumentError}</p>
+                    )}
                   </div>
 
                   <div className="pt-2 border-t border-border/60 space-y-2">
@@ -474,6 +502,9 @@ export default function Auth() {
                       onChange={setOrgFile("company_document")}
                       className="w-full text-xs text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-primary file:text-primary-foreground file:text-xs file:font-heading file:font-semibold"
                     />
+                    {submitted && companyDocumentError && (
+                      <p className="text-[11px] text-destructive px-1">{companyDocumentError}</p>
+                    )}
                   </div>
 
                   <div className="pt-2 border-t border-border/60">
@@ -498,36 +529,56 @@ export default function Auth() {
                     </div>
 
                     {orgForm.payout_method === "jazzcash" ? (
-                      <input
-                        required
-                        value={orgForm.jazzcash_number}
-                        onChange={setOrg("jazzcash_number")}
-                        placeholder="JazzCash number, e.g. 03001234567"
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
-                      />
+                      <div>
+                        <input
+                          required
+                          value={orgForm.jazzcash_number}
+                          onChange={setOrg("jazzcash_number")}
+                          placeholder="JazzCash number, e.g. 03001234567"
+                          className={orgInputClass(submitted && jazzcashNumberError)}
+                        />
+                        {submitted && jazzcashNumberError && (
+                          <p className="mt-1.5 text-[11px] text-destructive px-1">{jazzcashNumberError}</p>
+                        )}
+                      </div>
                     ) : (
                       <div className="space-y-3">
-                        <input
-                          required
-                          value={orgForm.bank_name}
-                          onChange={setOrg("bank_name")}
-                          placeholder="Bank name"
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
-                        />
-                        <input
-                          required
-                          value={orgForm.bank_account_title}
-                          onChange={setOrg("bank_account_title")}
-                          placeholder="Account title"
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
-                        />
-                        <input
-                          required
-                          value={orgForm.bank_account_number}
-                          onChange={setOrg("bank_account_number")}
-                          placeholder="Account number / IBAN"
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary placeholder:text-muted-foreground/70"
-                        />
+                        <div>
+                          <input
+                            required
+                            value={orgForm.bank_name}
+                            onChange={setOrg("bank_name")}
+                            placeholder="Bank name"
+                            className={orgInputClass(submitted && bankNameError)}
+                          />
+                          {submitted && bankNameError && (
+                            <p className="mt-1.5 text-[11px] text-destructive px-1">{bankNameError}</p>
+                          )}
+                        </div>
+                        <div>
+                          <input
+                            required
+                            value={orgForm.bank_account_title}
+                            onChange={setOrg("bank_account_title")}
+                            placeholder="Account title"
+                            className={orgInputClass(submitted && bankAccountTitleError)}
+                          />
+                          {submitted && bankAccountTitleError && (
+                            <p className="mt-1.5 text-[11px] text-destructive px-1">{bankAccountTitleError}</p>
+                          )}
+                        </div>
+                        <div>
+                          <input
+                            required
+                            value={orgForm.bank_account_number}
+                            onChange={setOrg("bank_account_number")}
+                            placeholder="Account number / IBAN"
+                            className={orgInputClass(submitted && bankAccountNumberError)}
+                          />
+                          {submitted && bankAccountNumberError && (
+                            <p className="mt-1.5 text-[11px] text-destructive px-1">{bankAccountNumberError}</p>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -574,20 +625,32 @@ export default function Auth() {
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-heading font-bold text-base bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow disabled:opacity-60"
-              >
-                {loading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <>
-                    {mode === "login" ? "Sign In" : "Create Account"}
-                    <ArrowRight className="w-4 h-4" />
-                  </>
+              <div className="flex gap-3">
+                {isOrgStep2 && (
+                  <button
+                    type="button"
+                    onClick={() => { setOrgStep(1); setError(""); setSubmitted(false); }}
+                    className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl font-heading font-bold text-base border border-border hover:border-primary/60 transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    Back
+                  </button>
                 )}
-              </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-heading font-bold text-base bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow disabled:opacity-60"
+                >
+                  {loading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      {mode === "login" ? "Sign In" : role === "organizer" && orgStep === 1 ? "Next" : "Create Account"}
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
             </form>
 
             {/* Divider */}

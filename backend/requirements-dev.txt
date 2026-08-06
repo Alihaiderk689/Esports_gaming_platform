@@ -1,0 +1,13 @@
+# Extra deps for `python manage.py evaluate_rag` only — not imported by any
+# code path the running app (or the Docker image) actually serves, so they're
+# kept out of requirements.txt. Install with:
+#   pip install -r requirements-dev.txt
+#
+# Judge LLM goes through langchain-openai pointed at Groq's OpenAI-compatible
+# endpoint (see evaluate_rag.py) instead of langchain-groq, which pins
+# groq<1.0 and would downgrade the groq==1.0.0 pinned in requirements.txt.
+-r requirements.txt
+ragas==0.4.3
+langchain-openai==0.3.35
+langchain-huggingface==0.3.1
+datasets==4.5.0

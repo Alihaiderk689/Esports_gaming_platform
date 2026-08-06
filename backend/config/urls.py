@@ -36,23 +36,26 @@ urlpatterns = [
     path('api/', include('rag_chat.urls')),
 ]
 
-if settings.DEBUG:
-    # Only genuinely public uploads (game logos, tournament cover images — both
-    # meant to be visible to logged-out visitors browsing the site) are served
-    # from here and stay on local disk. Sensitive uploads (CNIC scans, payment
-    # proofs, compliance documents) live in Cloudinary via CloudinarySignedStorage
-    # instead — see core/storage.py and secure_media_view above — precisely so
-    # they're NOT reachable through this catch-all just by guessing a path.
-    #
-    # Exempt from clickjacking protection (X_FRAME_OPTIONS='DENY' above) so cover
-    # images can be previewed in an <iframe> the same way secure_media_view's docs
-    # are. never_cache prevents browsers from reusing a stale cached copy of a
-    # response that was served (and blocked) before this exemption was in place,
-    # since django.views.static.serve doesn't send Cache-Control and browsers
-    # heuristically cache on Last-Modified alone.
-    public_media_serve = never_cache(xframe_options_exempt(serve))
-    media_prefix = settings.MEDIA_URL.lstrip('/')
-    urlpatterns += [
-        path(f'{media_prefix}games/logos/<path:path>', public_media_serve, {'document_root': settings.MEDIA_ROOT / 'games' / 'logos'}),
-        path(f'{media_prefix}tournaments/covers/<path:path>', public_media_serve, {'document_root': settings.MEDIA_ROOT / 'tournaments' / 'covers'}),
-    ]
+# Only genuinely public uploads (game logos, tournament cover images — both
+# meant to be visible to logged-out visitors browsing the site) are served
+# from here and stay on local disk. Sensitive uploads (CNIC scans, payment
+# proofs, compliance documents) live in Cloudinary via CloudinarySignedStorage
+# instead — see core/storage.py and secure_media_view above — precisely so
+# they're NOT reachable through this catch-all just by guessing a path.
+#
+# Not DEBUG-gated: there's no separate static file server in front of this app
+# (MEDIA_ROOT is a plain volume, not Cloudinary), so production needs these
+# routes serving too, same as it needs STATIC_ROOT/whitenoise for admin assets.
+#
+# Exempt from clickjacking protection (X_FRAME_OPTIONS='DENY' above) so cover
+# images can be previewed in an <iframe> the same way secure_media_view's docs
+# are. never_cache prevents browsers from reusing a stale cached copy of a
+# response that was served (and blocked) before this exemption was in place,
+# since django.views.static.serve doesn't send Cache-Control and browsers
+# heuristically cache on Last-Modified alone.
+public_media_serve = never_cache(xframe_options_exempt(serve))
+media_prefix = settings.MEDIA_URL.lstrip('/')
+urlpatterns += [
+    path(f'{media_prefix}games/logos/<path:path>', public_media_serve, {'document_root': settings.MEDIA_ROOT / 'games' / 'logos'}),
+    path(f'{media_prefix}tournaments/covers/<path:path>', public_media_serve, {'document_root': settings.MEDIA_ROOT / 'tournaments' / 'covers'}),
+]

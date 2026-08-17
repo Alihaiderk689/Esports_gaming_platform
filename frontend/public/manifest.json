@@ -1,0 +1,16 @@
+{
+  "name": "Esports Pakistan",
+  "short_name": "Esports PK",
+  "description": "Esports Pakistan — the home of competitive gaming. Tournaments, brackets, rankings, players and more.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#ccff00",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

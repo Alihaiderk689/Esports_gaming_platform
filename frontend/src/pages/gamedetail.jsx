@@ -27,7 +27,7 @@ export default function GameDetail() {
         setTournaments(
           allTournaments
             .filter((t) => t.game_slug === slug)
-            .sort((a, b) => new Date(a.start_date) - new Date(b.start_date)),
+            .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime()),
         );
       })
       .catch((e) => setError(e.message || "Failed to load this game."))

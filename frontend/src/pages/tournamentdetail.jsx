@@ -13,7 +13,7 @@ const PLATFORM_SUGGESTIONS = ["Steam", "PlayStation", "Xbox", "Riot Games", "FAC
 
 const inputClass = "w-full px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary";
 
-function Field({ label, required, children }) {
+function Field({ label, required = false, children }) {
   return (
     <div>
       <label className="block text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground mb-2">
@@ -200,7 +200,7 @@ const BRACKET_FORMAT_LABELS = {
 const formatMoney = (n) => `PKR ${Number(n || 0).toLocaleString()}`;
 const formatDateTime = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
 
-function DetailItem({ icon: Icon, label, value }) {
+function DetailItem({ icon: Icon = null, label, value }) {
   if (!value) return null;
   return (
     <div className="flex items-start gap-2.5">

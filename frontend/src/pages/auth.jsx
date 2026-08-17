@@ -702,7 +702,7 @@ function RoleCard({ active, onClick, icon: Icon, label, desc }) {
   );
 }
 
-function Field({ icon: Icon, trailing, type = "text", error, ...props }) {
+function Field({ icon: Icon, trailing = null, type = "text", error = "", ...props }) {
   return (
     <div>
       <div className="relative">

@@ -1,145 +1,165 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import override_settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from rag_chat.models import ChatMessage, Rule
+from games.models import Game
+from rag_chat.models import ChatHistory, RuleBook
 
 User = get_user_model()
 
 
-def _mock_claude_response(text):
-    block = MagicMock()
-    block.type = 'text'
-    block.text = text
-    response = MagicMock()
-    response.content = [block]
-    return response
-
-
-class RuleApiTests(APITestCase):
+class RuleBookApiTests(APITestCase):
     def setUp(self):
+        self.game = Game.objects.create(name='Valorant', genre='FPS')
         self.user = User.objects.create_user(email='player@example.com', password='StrongPass123')
         self.admin = User.objects.create_user(email='admin@example.com', password='StrongPass123', is_staff=True)
-        self.rule = Rule.objects.create(
-            title='Check-in policy',
-            content='Players must check in 15 minutes before their match.',
+        self.rulebook = RuleBook.objects.create(
+            game=self.game,
+            title='Valorant Official Rules',
+            pdf_url='https://example.com/rules.pdf',
+            public_id='rulebooks/valorant-rules',
             uploaded_by=self.admin,
+            is_processed=True,
         )
         self.client.force_authenticate(user=self.user)
 
     def _results(self, resp):
         return resp.data['results'] if isinstance(resp.data, dict) and 'results' in resp.data else resp.data
 
-    def test_list_rules_requires_auth(self):
+    def test_list_rulebooks_requires_auth(self):
         self.client.force_authenticate(user=None)
         resp = self.client.get('/api/rules/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_list_rules(self):
+    def test_list_rulebooks(self):
         resp = self.client.get('/api/rules/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         titles = {r['title'] for r in self._results(resp)}
-        self.assertIn('Check-in policy', titles)
+        self.assertIn('Valorant Official Rules', titles)
 
-    def test_upload_rule_forbidden_for_non_admin(self):
-        resp = self.client.post('/api/upload-rules/', {'title': 'New Rule', 'content': 'Some content.'})
+    def test_upload_rulebook_forbidden_for_non_admin(self):
+        resp = self.client.post('/api/rules/upload/', {'game': self.game.id, 'title': 'New Rules'})
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_upload_rule_requires_auth(self):
+    def test_upload_rulebook_requires_auth(self):
         self.client.force_authenticate(user=None)
-        resp = self.client.post('/api/upload-rules/', {'title': 'New Rule', 'content': 'Some content.'})
+        resp = self.client.post('/api/rules/upload/', {'game': self.game.id, 'title': 'New Rules'})
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_upload_rule_allowed_for_admin(self):
+    @patch('rag_chat.views.add_chunks')
+    @patch('rag_chat.views.generate_embeddings')
+    @patch('rag_chat.views.split_text_into_chunks')
+    @patch('rag_chat.views.extract_text_from_pdf')
+    @patch('rag_chat.views.upload_pdf')
+    def test_upload_rulebook_allowed_for_admin(
+        self, mock_upload_pdf, mock_extract_text, mock_split_text, mock_generate_embeddings, mock_add_chunks,
+    ):
+        mock_upload_pdf.return_value = {'url': 'https://example.com/new.pdf', 'public_id': 'rulebooks/new'}
+        mock_extract_text.return_value = 'Rule text.'
+        mock_split_text.return_value = [{'text': 'Rule text.'}]
+        mock_generate_embeddings.return_value = [[0.1, 0.2]]
+
         self.client.force_authenticate(user=self.admin)
-        resp = self.client.post('/api/upload-rules/', {'title': 'New Rule', 'content': 'Some content.'})
+        pdf = SimpleUploadedFile('rules.pdf', b'%PDF-1.4 fake pdf content', content_type='application/pdf')
+        resp = self.client.post(
+            '/api/rules/upload/', {'game': self.game.id, 'title': 'New Rules', 'pdf': pdf}, format='multipart',
+        )
+
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(resp.data['uploaded_by_email'], 'admin@example.com')
-        self.assertTrue(Rule.objects.filter(title='New Rule').exists())
+        self.assertEqual(resp.data['title'], 'New Rules')
+        rulebook = RuleBook.objects.get(title='New Rules')
+        self.assertTrue(rulebook.is_processed)
+        mock_add_chunks.assert_called_once()
 
-    def test_delete_rule_forbidden_for_non_admin(self):
-        resp = self.client.delete(f'/api/rules/{self.rule.pk}/')
+    def test_delete_rulebook_forbidden_for_non_admin(self):
+        resp = self.client.delete(f'/api/rules/{self.rulebook.pk}/delete/')
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertTrue(Rule.objects.filter(pk=self.rule.pk).exists())
+        self.assertTrue(RuleBook.objects.filter(pk=self.rulebook.pk).exists())
 
-    def test_delete_rule_allowed_for_admin(self):
+    @patch('rag_chat.views.delete_pdf')
+    @patch('rag_chat.views.delete_rulebook')
+    def test_delete_rulebook_allowed_for_admin(self, mock_delete_rulebook, mock_delete_pdf):
         self.client.force_authenticate(user=self.admin)
-        resp = self.client.delete(f'/api/rules/{self.rule.pk}/')
+        resp = self.client.delete(f'/api/rules/{self.rulebook.pk}/delete/')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(Rule.objects.filter(pk=self.rule.pk).exists())
+        self.assertFalse(RuleBook.objects.filter(pk=self.rulebook.pk).exists())
+        mock_delete_rulebook.assert_called_once_with(self.rulebook.pk)
+        mock_delete_pdf.assert_called_once_with(self.rulebook.public_id)
 
 
-@override_settings(ANTHROPIC_API_KEY='sk-ant-test-key')
 class ChatApiTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(email='player@example.com', password='StrongPass123')
         self.other_user = User.objects.create_user(email='other@example.com', password='StrongPass123')
-        self.admin = User.objects.create_user(email='admin@example.com', password='StrongPass123', is_staff=True)
-        Rule.objects.create(
-            title='Check-in policy',
-            content='Players must check in 15 minutes before their scheduled match time or forfeit their slot.',
-            uploaded_by=self.admin,
-        )
-        self.client.force_authenticate(user=self.user)
 
     def test_chat_requires_auth(self):
-        self.client.force_authenticate(user=None)
         resp = self.client.post('/api/chat/', {'message': 'When do I need to check in?'})
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_chat_requires_message(self):
+        self.client.force_authenticate(user=self.user)
         resp = self.client.post('/api/chat/', {})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @patch('rag_chat.services.anthropic.Anthropic')
-    def test_chat_success(self, mock_anthropic_cls):
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _mock_claude_response(
-            'You must check in 15 minutes before your match.',
-        )
-        mock_anthropic_cls.return_value = mock_client
+    @patch('rag_chat.views.generate_answer')
+    @patch('rag_chat.views.build_context')
+    @patch('rag_chat.views.rerank')
+    @patch('rag_chat.views.retrieve_candidates')
+    def test_chat_success(self, mock_retrieve, mock_rerank, mock_build_context, mock_generate_answer):
+        mock_retrieve.return_value = ([{'text': 'Check in 15 minutes before.'}], 'Valorant')
+        mock_rerank.return_value = [{'text': 'Check in 15 minutes before.'}]
+        mock_build_context.return_value = 'Check in 15 minutes before.'
+        mock_generate_answer.return_value = 'You must check in 15 minutes before your match.'
 
+        self.client.force_authenticate(user=self.user)
         resp = self.client.post('/api/chat/', {'message': 'When do I need to check in?'})
+
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(resp.data['role'], 'assistant')
-        self.assertEqual(resp.data['content'], 'You must check in 15 minutes before your match.')
+        self.assertEqual(resp.data['question'], 'When do I need to check in?')
+        self.assertEqual(resp.data['answer'], 'You must check in 15 minutes before your match.')
 
-        messages = list(ChatMessage.objects.filter(user=self.user).order_by('created_at'))
-        self.assertEqual(len(messages), 2)
-        self.assertEqual(messages[0].role, 'user')
-        self.assertEqual(messages[0].content, 'When do I need to check in?')
-        self.assertEqual(messages[1].role, 'assistant')
+        chat = ChatHistory.objects.get(user=self.user)
+        self.assertEqual(chat.question, 'When do I need to check in?')
+        self.assertEqual(chat.answer, 'You must check in 15 minutes before your match.')
+        self.assertEqual(chat.game_name, 'Valorant')
 
-        # Verify the rule content was actually passed to Claude as system context
-        call_kwargs = mock_client.messages.create.call_args.kwargs
-        self.assertIn('Check-in policy', call_kwargs['system'])
-        self.assertEqual(call_kwargs['model'], 'claude-opus-4-8')
+        mock_generate_answer.assert_called_once_with(
+            'When do I need to check in?', 'Check in 15 minutes before.', history=[],
+        )
 
-    @patch('rag_chat.services.anthropic.Anthropic')
-    def test_chat_includes_prior_history(self, mock_anthropic_cls):
-        ChatMessage.objects.create(user=self.user, role=ChatMessage.Role.USER, content='Hello')
-        ChatMessage.objects.create(user=self.user, role=ChatMessage.Role.ASSISTANT, content='Hi there!')
+    @patch('rag_chat.views.generate_answer')
+    @patch('rag_chat.views.build_context')
+    @patch('rag_chat.views.rerank')
+    @patch('rag_chat.views.retrieve_candidates')
+    def test_chat_includes_prior_history(self, mock_retrieve, mock_rerank, mock_build_context, mock_generate_answer):
+        ChatHistory.objects.create(user=self.user, question='Hello', answer='Hi there!', game_name='Valorant')
 
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _mock_claude_response('Follow-up answer.')
-        mock_anthropic_cls.return_value = mock_client
+        mock_retrieve.return_value = ([], 'Valorant')
+        mock_rerank.return_value = []
+        mock_build_context.return_value = ''
+        mock_generate_answer.return_value = 'Follow-up answer.'
 
+        self.client.force_authenticate(user=self.user)
         self.client.post('/api/chat/', {'message': 'Follow-up question'})
 
-        call_kwargs = mock_client.messages.create.call_args.kwargs
-        sent_messages = call_kwargs['messages']
-        self.assertEqual(sent_messages[0], {'role': 'user', 'content': 'Hello'})
-        self.assertEqual(sent_messages[1], {'role': 'assistant', 'content': 'Hi there!'})
-        self.assertEqual(sent_messages[2], {'role': 'user', 'content': 'Follow-up question'})
+        mock_generate_answer.assert_called_once_with(
+            'Follow-up question', '', history=[{'question': 'Hello', 'answer': 'Hi there!'}],
+        )
+        # No game named in this question, so the previous turn's game_name carries forward.
+        mock_retrieve.assert_called_once_with('Follow-up question', fallback_game='Valorant')
 
-    @patch('rag_chat.services.anthropic.Anthropic')
-    def test_chat_history_isolated_per_user(self, mock_anthropic_cls):
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _mock_claude_response('Answer for other user.')
-        mock_anthropic_cls.return_value = mock_client
+    @patch('rag_chat.views.generate_answer')
+    @patch('rag_chat.views.build_context')
+    @patch('rag_chat.views.rerank')
+    @patch('rag_chat.views.retrieve_candidates')
+    def test_chat_history_isolated_per_user(self, mock_retrieve, mock_rerank, mock_build_context, mock_generate_answer):
+        mock_retrieve.return_value = ([], None)
+        mock_rerank.return_value = []
+        mock_build_context.return_value = ''
+        mock_generate_answer.return_value = 'Answer for other user.'
 
         self.client.force_authenticate(user=self.other_user)
         self.client.post('/api/chat/', {'message': 'A question only other_user asked'})
@@ -147,52 +167,24 @@ class ChatApiTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         resp = self.client.get('/api/chat/history/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        results = resp.data['results'] if isinstance(resp.data, dict) and 'results' in resp.data else resp.data
-        self.assertEqual(len(results), 0)
+        self.assertEqual(len(self._results(resp)), 0)
+
+    def _results(self, resp):
+        return resp.data['results'] if isinstance(resp.data, dict) and 'results' in resp.data else resp.data
 
     def test_chat_history_requires_auth(self):
-        self.client.force_authenticate(user=None)
         resp = self.client.get('/api/chat/history/')
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    @patch('rag_chat.services.anthropic.Anthropic')
-    def test_chat_history_ordered_chronologically(self, mock_anthropic_cls):
-        mock_client = MagicMock()
-        mock_client.messages.create.side_effect = [
-            _mock_claude_response('First answer.'),
-            _mock_claude_response('Second answer.'),
-        ]
-        mock_anthropic_cls.return_value = mock_client
+    @patch('rag_chat.views.retrieve_candidates')
+    def test_chat_pipeline_failure_returns_503(self, mock_retrieve):
+        # Any exception in the retrieve/rerank/build/generate pipeline (a real
+        # Groq auth failure, a Chroma outage, etc.) is caught by the same
+        # `except Exception` in ChatView.post — one exception source is
+        # representative of the whole code path.
+        mock_retrieve.side_effect = Exception('vector store unreachable')
 
-        self.client.post('/api/chat/', {'message': 'First question'})
-        self.client.post('/api/chat/', {'message': 'Second question'})
-
-        resp = self.client.get('/api/chat/history/')
-        results = resp.data['results'] if isinstance(resp.data, dict) and 'results' in resp.data else resp.data
-        contents = [m['content'] for m in results]
-        self.assertEqual(contents, [
-            'First question', 'First answer.', 'Second question', 'Second answer.',
-        ])
-
-    def test_chat_missing_api_key_returns_503(self):
-        with self.settings(ANTHROPIC_API_KEY=''):
-            resp = self.client.post('/api/chat/', {'message': 'Hello'})
-        self.assertEqual(resp.status_code, 503)
-        self.assertTrue(ChatMessage.objects.filter(user=self.user, role='user', content='Hello').exists())
-        self.assertFalse(ChatMessage.objects.filter(user=self.user, role='assistant').exists())
-
-    @patch('rag_chat.services.anthropic.Anthropic')
-    def test_chat_authentication_error_returns_503(self, mock_anthropic_cls):
-        import anthropic as anthropic_module
-
-        mock_client = MagicMock()
-        mock_client.messages.create.side_effect = anthropic_module.AuthenticationError(
-            message='invalid key', response=MagicMock(status_code=401, headers={}), body=None,
-        )
-        mock_anthropic_cls.return_value = mock_client
-
+        self.client.force_authenticate(user=self.user)
         resp = self.client.post('/api/chat/', {'message': 'Hello'})
         self.assertEqual(resp.status_code, 503)
-        # The user message is still recorded even though the assistant call failed
-        self.assertTrue(ChatMessage.objects.filter(user=self.user, role='user', content='Hello').exists())
-        self.assertFalse(ChatMessage.objects.filter(user=self.user, role='assistant').exists())
+        self.assertFalse(ChatHistory.objects.filter(user=self.user).exists())

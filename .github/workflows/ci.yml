@@ -33,10 +33,15 @@ jobs:
     env:
       # Dummy values are enough for tests: settings.py requires these to be
       # set, but nothing in the test suite exercises the real integrations
-      # (Cloudinary/Groq/Chroma calls are mocked or never invoked at import
-      # time, unlike the sentence-transformers models below).
+      # (Cloudinary/Chroma calls are mocked or never invoked at import time,
+      # unlike the sentence-transformers models below). GROQ_API_KEY is the
+      # one exception — rag_chat/services/groq_service.py constructs a Groq
+      # client at *module import* time, so it must be set (even to a dummy
+      # value) just for `python manage.py test` to be able to import the app
+      # at all, whether or not any test actually calls Groq.
       SECRET_KEY: ci-test-secret-key
       JWT_SECRET_KEY: ci-test-jwt-secret-key
+      GROQ_API_KEY: ci-test-groq-key
       DEBUG: "False"
       ENVIRONMENT: development
       DATABASE_URL_DEV: postgres://postgres:postgres@localhost:5432/gaming_platform_test

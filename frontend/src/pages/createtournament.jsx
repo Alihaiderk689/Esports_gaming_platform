@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import {
-  Loader2, ArrowRight, ArrowLeft, Trophy, CheckCircle2, Clock, XCircle, Upload, FileCheck2,
+  Loader2, ArrowRight, ArrowLeft, Trophy, Clock, Upload, FileCheck2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";

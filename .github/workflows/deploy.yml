@@ -1,0 +1,26 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Run CI
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy to production
+    needs: ci
+    runs-on: ubuntu-latest
+    # Targeting a protected "production" environment is what makes this job
+    # pause for manual approval (configure required reviewers under repo
+    # Settings > Environments > production) before the steps below run —
+    # and it only becomes eligible to run once the `ci` job above succeeds.
+    environment: production
+    steps:
+      - name: Trigger Render deploy (backend)
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+
+      - name: Trigger Vercel deploy (frontend)
+        run: curl -fsS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK_URL }}"

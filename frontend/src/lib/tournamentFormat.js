@@ -7,6 +7,7 @@ export const formatMoney = (n) => `PKR ${Number(n || 0).toLocaleString()}`;
 
 export function formatDateRange(start, end) {
   if (!start) return "TBA";
+  /** @type {Intl.DateTimeFormatOptions} */
   const opts = { month: "short", day: "numeric" };
   const s = new Date(start);
   if (!end) return `${s.toLocaleDateString(undefined, opts)}, ${s.getFullYear()}`;

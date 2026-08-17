@@ -150,7 +150,7 @@ export default function AdminGames() {
     setError("");
     try {
       const formData = new FormData();
-      Object.entries(form).forEach(([key, value]) => formData.append(key, value));
+      Object.entries(form).forEach(([key, value]) => formData.append(key, String(value)));
       selectedCategoryIds.forEach((id) => formData.append("category_ids", id));
       if (logoFile) formData.append("logo", logoFile);
 

@@ -47,7 +47,7 @@ const initialFiles = {
   sponsor_agreement: null,
 };
 
-function Field({ label, required, children }) {
+function Field({ label, required = false, children }) {
   return (
     <div>
       <label className="block text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground mb-2">
@@ -78,7 +78,7 @@ function Select({ options, ...props }) {
   );
 }
 
-function FileInput({ label, file, onChange, required }) {
+function FileInput({ label, file, onChange, required = false }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
@@ -184,7 +184,7 @@ export default function CreateTournament() {
       const formData = new FormData();
       Object.entries(form).forEach(([key, value]) => {
         if (value === "" || value === null || value === undefined) return;
-        formData.append(key, value);
+        formData.append(key, String(value));
       });
       Object.entries(files).forEach(([key, file]) => {
         if (file) formData.append(key, file);

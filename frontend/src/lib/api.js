@@ -57,7 +57,9 @@ async function handleResponse(res) {
     // as { field: ["reason", ...] } with no detail/message/error wrapper.
     if (!msg && data && typeof data === "object") msg = data;
     if (msg && typeof msg === "object") msg = Object.values(msg).flat().join(" ");
-    const err = new Error(typeof msg === "string" ? msg : `Request failed (${res.status})`);
+    const err = /** @type {Error & {status?: number, data?: any}} */ (
+      new Error(typeof msg === "string" ? msg : `Request failed (${res.status})`)
+    );
     err.status = res.status;
     err.data = data;
     throw err;
@@ -74,12 +76,18 @@ async function safeFetch(url, options) {
   try {
     return await fetch(url, options);
   } catch {
-    const err = new Error("Network error — check your connection and try again.");
+    const err = /** @type {Error & {status?: number}} */ (
+      new Error("Network error — check your connection and try again.")
+    );
     err.status = 0;
     throw err;
   }
 }
 
+/**
+ * @param {string} path
+ * @param {{method?: string, body?: any, auth?: boolean, formData?: boolean, query?: Record<string, any>}} [options]
+ */
 async function request(path, { method = "GET", body, auth = true, formData, query } = {}) {
   const url = new URL(API_BASE_URL + path);
   if (query) {

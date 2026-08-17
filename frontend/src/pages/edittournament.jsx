@@ -38,7 +38,7 @@ function toLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function Field({ label, required, children }) {
+function Field({ label, required = false, children }) {
   return (
     <div>
       <label className="block text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground mb-2">

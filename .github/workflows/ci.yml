@@ -48,6 +48,15 @@ jobs:
       ALLOWED_HOSTS: localhost,127.0.0.1
       CORS_ORIGINS: http://localhost:5173
       CSRF_TRUSTED_ORIGINS: http://localhost:5173
+      # settings.py defaults these three to `not DEBUG`, i.e. True whenever
+      # DEBUG=False. Left unset here, SECURE_SSL_REDIRECT alone made
+      # SecurityMiddleware 301-redirect every plain-HTTP request the Django
+      # test client makes (it doesn't follow redirects by default), which
+      # surfaced as ~150 unrelated-looking test failures/errors instead of
+      # one obvious cause.
+      SECURE_SSL_REDIRECT: "False"
+      SESSION_COOKIE_SECURE: "False"
+      CSRF_COOKIE_SECURE: "False"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

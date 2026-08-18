@@ -263,6 +263,17 @@ LOGGING = {
         },
     },
     'loggers': {
+        # Django's own default config only sends django.request (unhandled
+        # 500s, full traceback via exc_info) to console when DEBUG=True —
+        # gated by its 'require_debug_true' filter. With DEBUG correctly off
+        # in production, that left server errors completely unlogged
+        # anywhere. This entry restores console output for them regardless
+        # of DEBUG, unfiltered.
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
         'rag_chat': {
             'handlers': ['console'],
             'level': 'INFO',

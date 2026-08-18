@@ -118,14 +118,14 @@ export default function Auth() {
       if (window.google?.accounts?.id) {
         window.google.accounts.id.initialize({
           client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-          // FedCM is a browser-mediated identity API (Chrome/Edge only —
-          // Safari doesn't implement it) that replaces the old popup +
-          // third-party-cookie flow GIS falls back to otherwise. Chrome has
-          // been progressively restricting third-party cookies, which is
-          // what broke the popup flow there; FedCM sidesteps that by having
-          // the browser itself broker the account chooser instead of an
-          // iframe/popup depending on cookies to talk back to this page.
-          use_fedcm_for_button: true,
+          // Tried use_fedcm_for_button here on the theory that Chrome's
+          // third-party-cookie restrictions were breaking the popup flow the
+          // same way Safari's ITP did — but the button stayed broken in
+          // Chrome specifically with FedCM on, while the plain popup flow is
+          // the one confirmed working (in Safari, which doesn't support
+          // FedCM at all and falls back to it automatically). Reverted:
+          // whatever's actually wrong in Chrome, forcing FedCM there wasn't
+          // the fix and only left it on a less-tested code path.
           callback: async (response) => {
             setError("");
             try {

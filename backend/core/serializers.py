@@ -1,10 +1,10 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.password_validation import validate_password
-from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from core.models import Follow
+from core.models import Follow, PendingRegistration
 from core.validators import clean_person_name
 from organizer.models import Organizer
 from organizer.serializers import validate_payout_fields
@@ -90,16 +90,30 @@ class RegisterSerializer(NameValidationMixin, serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        # No User (or Organizer) is created here — only a PendingRegistration.
+        # The real account only comes into existence when the emailed link is
+        # verified (VerifyEmailView), so an unconfirmed/fake email never
+        # results in a usable account. update_or_create keyed on email means
+        # re-registering the same address before verifying just refreshes
+        # this row instead of erroring — friendlier than making someone wait
+        # out a token or hunt for "resend" if the first email didn't arrive.
         validated_data.pop('confirm_password')
         role = validated_data.pop('role', 'user')
+        password = validated_data.pop('password')
         organizer_data = {
             field: validated_data.pop(field) for field in ORGANIZER_APPLICATION_FIELDS if field in validated_data
         }
-        with transaction.atomic():
-            user = User.objects.create_user(**validated_data)
-            if role == 'organizer':
-                Organizer.objects.create(user=user, **organizer_data)
-        return user
+        pending, _ = PendingRegistration.objects.update_or_create(
+            email=validated_data['email'],
+            defaults={
+                'password_hash': make_password(password),
+                'first_name': validated_data['first_name'],
+                'last_name': validated_data['last_name'],
+                'role': role,
+                **organizer_data,
+            },
+        )
+        return pending
 
 
 class LoginSerializer(TokenObtainPairSerializer):

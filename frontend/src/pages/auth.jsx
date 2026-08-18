@@ -170,8 +170,8 @@ export default function Auth() {
         setOrgStep(1);
         setInfo(
           role === "organizer"
-            ? "Account created! Check your email to verify it, then sign in. Your organizer application is now under review."
-            : "Account created! Check your email to verify it, then sign in.",
+            ? "Check your email to verify it and finish creating your account. Once verified, your organizer application will be submitted for review."
+            : "Check your email to verify it and finish creating your account.",
         );
         setJustRegistered(true);
       }

@@ -137,10 +137,18 @@ export default function Auth() {
           },
         });
         if (googleBtnRef.current) {
+          // A hardcoded width here silently desyncs the real, invisible
+          // Google iframe from the fluid (w-full) decorative button drawn
+          // beneath it: the iframe stays a fixed size while its container
+          // stretches to the card width, leaving a dead zone outside the
+          // iframe's actual bounds where clicks land on the inert wrapper
+          // div instead. Measuring the container's real rendered width each
+          // time keeps them in sync. (GIS clamps this to its own supported
+          // range internally, so an oversized measurement here is safe.)
           window.google.accounts.id.renderButton(googleBtnRef.current, {
             theme: "filled_black",
             size: "large",
-            width: 400,
+            width: googleBtnRef.current.offsetWidth,
             text: "continue_with",
           });
         }

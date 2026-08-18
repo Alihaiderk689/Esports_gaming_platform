@@ -166,7 +166,15 @@ class GoogleLoginView(APIView):
                 google_requests.Request(),
                 settings.GOOGLE_CLIENT_ID,
             )
-        except ValueError:
+        except ValueError as exc:
+            # verify_oauth2_token raises plain ValueError for every distinct
+            # failure mode (expired token, audience/client_id mismatch, bad
+            # signature, wrong issuer, clock skew...) with no subclass to
+            # distinguish them — the message text is the only place that
+            # information exists. Logging it here (rather than only the
+            # generic client-facing message below) is the only way to tell
+            # those apart from Render's logs after the fact.
+            logger.warning('Google id_token verification failed: %s', exc)
             raise ValidationError({'id_token': 'Invalid Google token.'})
         except GoogleAuthError:
             logger.exception('Failed to reach Google while verifying an id_token')

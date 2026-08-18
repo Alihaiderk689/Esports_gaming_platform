@@ -1,14 +1,27 @@
 from unittest.mock import patch
 
+import cloudinary.exceptions
 from django.contrib.auth import get_user_model
+from django.core import mail
+from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from core.models import Follow
+from core.models import Follow, PendingRegistration
+from core.tokens import pending_registration_token
+from organizer.models import Organizer
 
 User = get_user_model()
+
+# Real magic bytes so validate_document_file (core/validators.py) accepts them —
+# padded past the 8-byte header it sniffs, content beyond that is irrelevant.
+_JPEG_BYTES = b'\xff\xd8\xff\xe0' + b'\x00' * 16
+_PDF_BYTES = b'%PDF-1.4\n' + b'fake pdf body'.ljust(16, b'\x00')
 
 
 class PlayerApiTests(APITestCase):
@@ -153,12 +166,15 @@ class RegisterApiTests(APITestCase):
     def test_register_success(self):
         resp = self.client.post('/api/auth/register/', self._payload())
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
-        self.assertTrue(User.objects.filter(email='newplayer@example.com').exists())
+        # No account exists until the emailed link is clicked - only a pending row.
+        self.assertFalse(User.objects.filter(email='newplayer@example.com').exists())
+        self.assertTrue(PendingRegistration.objects.filter(email='newplayer@example.com').exists())
 
     def test_register_normalizes_email_case_and_whitespace(self):
         resp = self.client.post('/api/auth/register/', self._payload(email='  John@Example.com  '))
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
-        self.assertTrue(User.objects.filter(email='john@example.com').exists())
+        self.assertFalse(User.objects.filter(email='john@example.com').exists())
+        self.assertTrue(PendingRegistration.objects.filter(email='john@example.com').exists())
 
     def test_register_duplicate_email_rejected(self):
         User.objects.create_user(email='taken@example.com', password='StrongPass123!')
@@ -216,6 +232,132 @@ class RegisterApiTests(APITestCase):
     def test_register_name_with_multiple_words_accepted(self):
         resp = self.client.post('/api/auth/register/', self._payload(first_name='Mary Jane'))
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+    def test_register_again_before_verifying_refreshes_pending_row(self):
+        self.client.post('/api/auth/register/', self._payload(first_name='John'))
+        resp = self.client.post('/api/auth/register/', self._payload(first_name='Jonathan'))
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertEqual(PendingRegistration.objects.filter(email='newplayer@example.com').count(), 1)
+        self.assertEqual(
+            PendingRegistration.objects.get(email='newplayer@example.com').first_name, 'Jonathan',
+        )
+
+
+class VerifyEmailApiTests(APITestCase):
+    def setUp(self):
+        # verify-email/resend share the 'email_action' throttle scope (5/hour), which
+        # is cache-backed and doesn't reset between test methods on its own.
+        cache.clear()
+
+    def _register(self, **overrides):
+        payload = {
+            'email': 'pending@example.com',
+            'password': 'StrongPass123!',
+            'confirm_password': 'StrongPass123!',
+            'first_name': 'Jane',
+            'last_name': 'Doe',
+        }
+        payload.update(overrides)
+        resp = self.client.post('/api/auth/register/', payload)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        return PendingRegistration.objects.get(email=payload['email'].strip().lower())
+
+    def _verify_url(self, pending, token=None):
+        uid = urlsafe_base64_encode(force_bytes(pending.pk))
+        token = token if token is not None else pending_registration_token.make_token(pending)
+        return f'/api/auth/verify-email/?uid={uid}&token={token}'
+
+    def test_verify_creates_user_and_deletes_pending(self):
+        pending = self._register()
+        resp = self.client.get(self._verify_url(pending))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+
+        user = User.objects.get(email='pending@example.com')
+        self.assertTrue(user.is_email_verified)
+        self.assertFalse(PendingRegistration.objects.filter(pk=pending.pk).exists())
+
+        # Proves password_hash round-trips correctly (no double-hashing).
+        login_resp = self.client.post(
+            '/api/auth/login/', {'email': 'pending@example.com', 'password': 'StrongPass123!'},
+        )
+        self.assertEqual(login_resp.status_code, status.HTTP_200_OK, login_resp.data)
+
+    def test_verify_invalid_token_rejected(self):
+        pending = self._register()
+        resp = self.client.get(self._verify_url(pending, token='not-a-real-token'))
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(User.objects.filter(email='pending@example.com').exists())
+        self.assertTrue(PendingRegistration.objects.filter(pk=pending.pk).exists())
+
+    def test_verify_unknown_uid_rejected(self):
+        resp = self.client.get('/api/auth/verify-email/?uid=OTk5OTk5&token=bogus')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class VerifyEmailOrganizerApiTests(APITestCase):
+    def setUp(self):
+        cache.clear()  # see VerifyEmailApiTests.setUp — same throttle-reset reason
+        # cnic_document/company_document live in Cloudinary (CloudinarySignedStorage),
+        # so no local files are ever written — just patch the SDK calls instead of
+        # hitting the network, same pattern as organizer/tests.py's OrganizerApiTests.
+        self.mock_upload = patch('cloudinary.uploader.upload').start()
+        self.mock_upload.return_value = {'public_id': 'test/fake-public-id'}
+        self.mock_resource = patch(
+            'cloudinary.api.resource', side_effect=cloudinary.exceptions.NotFound('not found'),
+        ).start()
+        self.addCleanup(patch.stopall)
+
+    def test_verify_organizer_creates_organizer_profile(self):
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        company_file = SimpleUploadedFile('registration.pdf', _PDF_BYTES, content_type='application/pdf')
+        resp = self.client.post('/api/auth/register/', {
+            'email': 'org@example.com',
+            'password': 'StrongPass123!',
+            'confirm_password': 'StrongPass123!',
+            'first_name': 'Org',
+            'last_name': 'Owner',
+            'role': 'organizer',
+            'company_name': 'Acme Esports',
+            'cnic_document': cnic_file,
+            'company_document': company_file,
+            'payout_method': 'jazzcash',
+            'jazzcash_number': '03001234567',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+        pending = PendingRegistration.objects.get(email='org@example.com')
+        uid = urlsafe_base64_encode(force_bytes(pending.pk))
+        token = pending_registration_token.make_token(pending)
+        verify_resp = self.client.get(f'/api/auth/verify-email/?uid={uid}&token={token}')
+        self.assertEqual(verify_resp.status_code, status.HTTP_200_OK, verify_resp.data)
+
+        user = User.objects.get(email='org@example.com')
+        organizer = Organizer.objects.get(user=user)
+        self.assertEqual(organizer.company_name, 'Acme Esports')
+        self.assertTrue(organizer.cnic_document)
+        self.assertTrue(organizer.company_document)
+        self.assertFalse(PendingRegistration.objects.filter(pk=pending.pk).exists())
+
+
+class ResendVerificationApiTests(APITestCase):
+    def setUp(self):
+        cache.clear()  # see VerifyEmailApiTests.setUp — same throttle-reset reason
+
+    def test_resend_sends_new_email_for_pending(self):
+        self.client.post('/api/auth/register/', {
+            'email': 'resend@example.com', 'password': 'StrongPass123!', 'confirm_password': 'StrongPass123!',
+            'first_name': 'Res', 'last_name': 'End',
+        })
+        mail.outbox.clear()
+        resp = self.client.post('/api/auth/resend-verification/', {'email': 'resend@example.com'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('resend@example.com', mail.outbox[0].to)
+
+    def test_resend_silent_for_unknown_email(self):
+        resp = self.client.post('/api/auth/resend-verification/', {'email': 'nobody@example.com'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 0)
 
 
 class LoginApiTests(APITestCase):

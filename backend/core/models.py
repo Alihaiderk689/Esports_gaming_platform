@@ -3,6 +3,9 @@ from django.contrib.auth.models import PermissionsMixin
 from django.db import models
 from django.utils import timezone
 
+from core.storage import CloudinarySignedStorage
+from core.validators import validate_document_file
+
 
 class UserManager(BaseUserManager):
     use_in_migrations = True
@@ -43,6 +46,43 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
+
+    def __str__(self):
+        return self.email
+
+
+class PendingRegistration(models.Model):
+    # No User (or Organizer, for organizer signups) exists until the email
+    # verification link is clicked — this holds everything submitted at
+    # /api/auth/register/ time until then, so an unverified/fake email never
+    # results in a usable account. See core/views.py's VerifyEmailView for
+    # where this gets converted into the real User/Organizer rows.
+    email = models.EmailField(unique=True)
+    password_hash = models.CharField(max_length=255)
+    first_name = models.CharField(max_length=150)
+    last_name = models.CharField(max_length=150)
+    role = models.CharField(max_length=20, default='user')
+
+    company_name = models.CharField(max_length=200, blank=True)
+    phone_number = models.CharField(max_length=30, blank=True)
+    address = models.CharField(max_length=255, blank=True)
+    cnic_number = models.CharField(max_length=20, blank=True)
+    cnic_document = models.FileField(
+        upload_to='organizer/cnic/%Y/%m/', storage=CloudinarySignedStorage(),
+        validators=[validate_document_file], blank=True, null=True,
+    )
+    company_registration_number = models.CharField(max_length=100, blank=True)
+    company_document = models.FileField(
+        upload_to='organizer/company/%Y/%m/', storage=CloudinarySignedStorage(),
+        validators=[validate_document_file], blank=True, null=True,
+    )
+    payout_method = models.CharField(max_length=10, blank=True)
+    jazzcash_number = models.CharField(max_length=30, blank=True)
+    bank_name = models.CharField(max_length=150, blank=True)
+    bank_account_title = models.CharField(max_length=150, blank=True)
+    bank_account_number = models.CharField(max_length=50, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.email

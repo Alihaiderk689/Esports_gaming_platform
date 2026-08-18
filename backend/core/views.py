@@ -4,6 +4,7 @@ import cloudinary.utils
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import signing
+from django.db import transaction
 from django.db.models import Count
 from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
@@ -14,6 +15,7 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
+from organizer.models import Organizer
 from rest_framework import filters, generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import APIException, ValidationError
@@ -24,7 +26,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from core.emails import send_password_reset_email, send_verification_email
-from core.models import Follow
+from core.models import Follow, PendingRegistration
 from core.serializers import (
     AdminUserSerializer,
     AdminUserUpdateSerializer,
@@ -42,7 +44,7 @@ from core.serializers import (
     VerifyEmailSerializer,
 )
 from core.storage import CloudinarySignedStorage
-from core.tokens import email_verification_token, password_reset_token, revoke_all_sessions
+from core.tokens import password_reset_token, pending_registration_token, revoke_all_sessions
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -110,27 +112,28 @@ class RegisterView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
+        pending = serializer.save()
 
-        # The account is already committed at this point — an SMTP failure here
-        # (bad credentials, provider outage) must not turn into a 500 that makes
-        # the client think registration itself failed, since retrying would just
-        # hit "email already registered" with no way to recover. Tell them
-        # plainly and let "resend verification" cover it instead.
+        # No account exists yet at this point — just a PendingRegistration.
+        # An SMTP failure here must not turn into a 500 that makes the client
+        # think registration itself failed, since retrying would just refresh
+        # the same pending row with no way to know the first attempt "failed"
+        # for an unrelated reason. Tell them plainly and let "resend
+        # verification" cover it instead.
         try:
-            send_verification_email(user)
-            detail = 'Registration successful. Check your email to verify your account.'
+            send_verification_email(pending)
+            detail = 'Check your email to verify it and finish creating your account.'
         except Exception:
-            logger.exception('Failed to send verification email to user %s', user.pk)
+            logger.exception('Failed to send verification email for pending registration %s', pending.pk)
             detail = (
-                "Registration successful, but we couldn't send the verification email right now. "
-                "Use \"Resend verification\" from the sign-in page once you're ready to verify."
+                "We couldn't send the verification email right now. "
+                "Use \"Resend verification\" from the sign-in page once you're ready to try again."
             )
 
-        if hasattr(user, 'organizer_profile'):
-            detail += ' Your organizer application is now under review.'
+        if pending.role == 'organizer':
+            detail += ' Once verified, your organizer application will be submitted for review.'
         return Response(
-            {'user': ProfileSerializer(user).data, 'detail': detail},
+            {'detail': detail},
             status=status.HTTP_201_CREATED,
         )
 
@@ -274,14 +277,47 @@ class VerifyEmailView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        user_id = _decode_uid(data['uid'])
-        user = User.objects.filter(pk=user_id).first() if user_id else None
-        if user is None or not email_verification_token.check_token(user, data['token']):
+        pending_id = _decode_uid(data['uid'])
+        pending = PendingRegistration.objects.filter(pk=pending_id).first() if pending_id else None
+        if pending is None or not pending_registration_token.check_token(pending, data['token']):
             raise ValidationError({'token': 'Invalid or expired verification link.'})
 
-        user.is_email_verified = True
-        user.save(update_fields=['is_email_verified'])
-        return Response({'detail': 'Email verified.'})
+        # This is the only place a User (and, for organizer signups, an
+        # Organizer) actually gets created — everything submitted at
+        # registration time has been sitting on `pending` until now.
+        with transaction.atomic():
+            user = User(
+                email=pending.email,
+                first_name=pending.first_name,
+                last_name=pending.last_name,
+                is_email_verified=True,
+            )
+            # Already hashed via make_password() when the PendingRegistration
+            # was created — set directly rather than create_user()/
+            # set_password(), which would hash it a second time.
+            user.password = pending.password_hash
+            user.save()
+
+            if pending.role == 'organizer':
+                Organizer.objects.create(
+                    user=user,
+                    company_name=pending.company_name,
+                    phone_number=pending.phone_number,
+                    address=pending.address,
+                    cnic_number=pending.cnic_number,
+                    cnic_document=pending.cnic_document,
+                    company_registration_number=pending.company_registration_number,
+                    company_document=pending.company_document,
+                    payout_method=pending.payout_method,
+                    jazzcash_number=pending.jazzcash_number,
+                    bank_name=pending.bank_name,
+                    bank_account_title=pending.bank_account_title,
+                    bank_account_number=pending.bank_account_number,
+                )
+
+            pending.delete()
+
+        return Response({'detail': 'Account created and email verified. You can sign in now.'})
 
 
 class ResendVerificationView(APIView):
@@ -292,12 +328,12 @@ class ResendVerificationView(APIView):
         serializer = ResendVerificationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data['email']
-        user = User.objects.filter(email__iexact=email, is_email_verified=False).first()
-        if user:
+        pending = PendingRegistration.objects.filter(email__iexact=email).first()
+        if pending:
             try:
-                send_verification_email(user)
+                send_verification_email(pending)
             except Exception:
-                logger.exception('Failed to send verification email to user %s', user.pk)
+                logger.exception('Failed to send verification email for pending registration %s', pending.pk)
         return Response({'detail': 'If that email exists and is unverified, a link has been sent.'})
 
 

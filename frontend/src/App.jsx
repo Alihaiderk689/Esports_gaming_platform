@@ -14,6 +14,7 @@ import AppLayout from "@/components/layout/applayout";
 import AdminLayout from "@/components/layout/adminlayout";
 import Landing from "@/pages/landing";
 import Auth from "@/pages/auth";
+import GoogleCallback from "@/pages/googlecallback";
 import ForgotPassword from "@/pages/forgotpassword";
 import ResetPassword from "@/pages/resetpassword";
 import VerifyEmail from "@/pages/verifyemail";
@@ -56,6 +57,7 @@ const AuthenticatedApp = () => {
     <Routes>
       <Route element={<GuestRoute />}>
         <Route path="/login" element={<Auth />} />
+        <Route path="/auth/google/callback" element={<GoogleCallback />} />
       </Route>
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />

@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/appauth";
-import { api } from "@/lib/api";
+import { startGoogleSignIn } from "@/lib/googleAuth";
+import { routeAfterLogin } from "@/lib/routeAfterLogin";
 import { Gamepad2, Mail, Lock, User, Eye, EyeOff, ArrowRight, ArrowLeft, Shield, Swords, CheckCircle2, Circle, Loader2 } from "lucide-react";
 
 const NAME_REGEX = /^[A-Za-z]+(?:[ '-][A-Za-z]+)*$/;
@@ -32,10 +33,9 @@ const PASSWORD_CHECKS = [
 ];
 
 export default function Auth() {
-  const { login, register, googleLogin } = useAuth();
+  const { login, register } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const googleBtnRef = useRef(null);
   const [mode, setMode] = useState("login"); // login | signup
   const [role, setRole] = useState("user"); // user | organizer
   const [showPw, setShowPw] = useState(false);
@@ -96,73 +96,6 @@ export default function Auth() {
     companyNameError || cnicDocumentError || companyDocumentError || jazzcashNumberError ||
     bankNameError || bankAccountTitleError || bankAccountNumberError;
 
-  // Organizers (any application status) always land on their dashboard, never the
-  // public landing page — only a non-organizer's own redirect-origin ("from") wins.
-  const routeAfterLogin = async (loggedInUser) => {
-    if (loggedInUser?.is_staff) {
-      navigate("/admin", { replace: true });
-      return;
-    }
-    try {
-      await api.get("/api/organizer/status/");
-      navigate("/dashboard", { replace: true });
-    } catch {
-      navigate(from, { replace: true });
-    }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    const tryInit = () => {
-      if (cancelled) return;
-      if (window.google?.accounts?.id) {
-        window.google.accounts.id.initialize({
-          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-          // Tried use_fedcm_for_button here on the theory that Chrome's
-          // third-party-cookie restrictions were breaking the popup flow the
-          // same way Safari's ITP did — but the button stayed broken in
-          // Chrome specifically with FedCM on, while the plain popup flow is
-          // the one confirmed working (in Safari, which doesn't support
-          // FedCM at all and falls back to it automatically). Reverted:
-          // whatever's actually wrong in Chrome, forcing FedCM there wasn't
-          // the fix and only left it on a less-tested code path.
-          callback: async (response) => {
-            setError("");
-            try {
-              const loggedInUser = await googleLogin(response.credential);
-              await routeAfterLogin(loggedInUser);
-            } catch (err) {
-              setError(err.message || "Google sign-in failed. Please try again.");
-            }
-          },
-        });
-        if (googleBtnRef.current) {
-          // A hardcoded width here silently desyncs the real, invisible
-          // Google iframe from the fluid (w-full) decorative button drawn
-          // beneath it: the iframe stays a fixed size while its container
-          // stretches to the card width, leaving a dead zone outside the
-          // iframe's actual bounds where clicks land on the inert wrapper
-          // div instead. Measuring the container's real rendered width each
-          // time keeps them in sync. (GIS clamps this to its own supported
-          // range internally, so an oversized measurement here is safe.)
-          window.google.accounts.id.renderButton(googleBtnRef.current, {
-            theme: "filled_black",
-            size: "large",
-            width: googleBtnRef.current.offsetWidth,
-            text: "continue_with",
-          });
-        }
-      } else {
-        setTimeout(tryInit, 150);
-      }
-    };
-    tryInit();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const submit = async (e) => {
     e.preventDefault();
     setError("");
@@ -195,7 +128,7 @@ export default function Auth() {
     try {
       if (mode === "login") {
         const loggedInUser = await login(email, form.password);
-        await routeAfterLogin(loggedInUser);
+        await routeAfterLogin(navigate, loggedInUser, from);
       } else {
         if (role === "organizer") {
           const fd = new FormData();
@@ -676,19 +609,14 @@ export default function Auth() {
               <div className="flex-1 h-px bg-border" />
             </div>
 
-            {/* Google — a real (invisible) Google Identity button is stacked on top of
-                this styled one so clicks land on Google's actual iframe while the
-                visible UI stays consistent with the rest of the app. */}
-            <div className="relative w-full h-[46px]">
-              <button
-                type="button"
-                className="absolute inset-0 w-full flex items-center justify-center gap-3 py-3 rounded-xl font-heading font-semibold text-sm glass hover:neon-border transition-all border border-border pointer-events-none"
-              >
-                <GoogleIcon />
-                Continue with Google
-              </button>
-              <div ref={googleBtnRef} className="absolute inset-0 overflow-hidden rounded-xl opacity-0" />
-            </div>
+            <button
+              type="button"
+              onClick={() => startGoogleSignIn(from)}
+              className="w-full flex items-center justify-center gap-3 py-3 rounded-xl font-heading font-semibold text-sm glass hover:neon-border transition-all border border-border"
+            >
+              <GoogleIcon />
+              Continue with Google
+            </button>
 
             <p className="mt-5 text-center text-xs text-muted-foreground">
               By continuing you agree to our{" "}

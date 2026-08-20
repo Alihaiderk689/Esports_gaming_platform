@@ -1,18 +1,42 @@
 version: 2
 updates:
+  # Routine minor/patch bumps get bundled into one PR per ecosystem per week
+  # instead of one PR per package — that first-ever run opened ~20 individual
+  # PRs at once, which is noise, not signal. A major version bump (the kind
+  # that actually needs a human to check for breaking changes) is
+  # deliberately NOT included in these groups, so it still shows up as its
+  # own separate PR rather than getting bundled in and possibly ignored.
   - package-ecosystem: "pip"
     directory: "/backend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      backend-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    groups:
+      frontend-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"

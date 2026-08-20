@@ -14,8 +14,8 @@ Run through this before every production deploy — not just the first one. Seve
 ## CORS / CSRF
 
 - [ ] `CORS_ORIGINS` is set to the real frontend origin(s) only — not the `localhost:5173` dev default.
-- [ ] `CORS_ALLOW_ALL_ORIGINS` is **not** introduced anywhere (it isn't used today; keep it that way).
-- [ ] `CORS_ALLOW_CREDENTIALS` is still `False` (`config/settings.py`) — the frontend authenticates via bearer token, not cookies, so there's nothing legitimate for credentialed CORS to unlock. If a future feature genuinely needs cross-origin cookies, that's a deliberate design change, not a quick flip — think it through rather than just setting it back to `True`.
+- [x] `CORS_ALLOW_ALL_ORIGINS` is **not** introduced anywhere (it isn't used today; keep it that way). **Regression-tested**: `core/tests.py:SecuritySettingsInvariantTests.test_cors_does_not_allow_all_origins` fails CI if this ever gets set.
+- [x] `CORS_ALLOW_CREDENTIALS` is still `False` (`config/settings.py`) — the frontend authenticates via bearer token, not cookies, so there's nothing legitimate for credentialed CORS to unlock. If a future feature genuinely needs cross-origin cookies, that's a deliberate design change, not a quick flip — think it through rather than just setting it back to `True`. **Regression-tested**: `test_cors_does_not_allow_credentials`.
 - [ ] `CSRF_TRUSTED_ORIGINS` matches the real frontend origin(s) — relevant to Django admin, not the JWT API (see `docs/SECURITY.md#csrf`).
 
 ## Security headers / CSP
@@ -29,8 +29,8 @@ Run through this before every production deploy — not just the first one. Seve
 - [ ] `GOOGLE_CLIENT_ID` (backend) matches `VITE_GOOGLE_CLIENT_ID` (frontend) exactly.
 - [ ] The production frontend's Google OAuth redirect URI is registered in Google Cloud Console under **Authorized redirect URIs** (a separate field from Authorized JavaScript origins — the former needs the full callback path, the latter only a bare origin).
 - [ ] Rate limits on `login`/`login_email`/`register`/`email_action`/`email_action_email` scopes are unchanged from `config/settings.py`'s `DEFAULT_THROTTLE_RATES` — if they were loosened for local testing, confirm they weren't left loosened in a deployed config.
-- [ ] `REDIS_URL` is set in production. Without it, throttling falls back to per-process `LocMemCache` — behind more than one gunicorn worker or instance, every rate limit above is effectively (configured rate) × (worker/instance count), not the configured rate. See `docs/SECURITY.md#rate-limiting`.
-- [ ] `SIMPLE_JWT['ALGORITHM']` is still explicitly `'HS256'` in `config/settings.py` — don't let this get removed under the assumption "the library default is fine," since the point of pinning it is that a future change can't silently widen it.
+- [ ] `REDIS_URL` is set in production. Without it, throttling falls back to per-process `LocMemCache` — behind more than one gunicorn worker or instance, every rate limit above is effectively (configured rate) × (worker/instance count), not the configured rate. See `docs/SECURITY.md#rate-limiting`. **Now flagged automatically if missed**: `core/checks.py:production_monitoring_check` (registered in `core/apps.py`) emits `core.W001` when `ENVIRONMENT=production` and `REDIS_URL` is unset — visible in `manage.py check` output and, since `backend/entrypoint.sh` runs `migrate --noinput` before starting gunicorn (and `migrate` runs system checks by default), in every Render deploy log. Advisory only — it warns, it doesn't block the deploy, since the app still runs (just with less correct throttling).
+- [x] `SIMPLE_JWT['ALGORITHM']` is still explicitly `'HS256'` in `config/settings.py` — don't let this get removed under the assumption "the library default is fine," since the point of pinning it is that a future change can't silently widen it. **Regression-tested**: `core/tests.py:SecuritySettingsInvariantTests.test_jwt_algorithm_is_pinned_to_hs256`.
 
 ## Authorization
 
@@ -42,9 +42,9 @@ Run through this before every production deploy — not just the first one. Seve
 
 ## Secrets
 
-- [ ] No `.env` file (any environment) is committed. `.gitignore` covers `.env`/`.env.*`/`.env.local`, but do a final `git status`/`git diff` scan before pushing, especially after adding a brand-new config file.
+- [x] No `.env` file (any environment) is committed. `.gitignore` covers `.env`/`.env.*`/`.env.local`. **CI-enforced**: `.github/workflows/ci.yml`'s `secrets-guard` job hard-fails the build if any file matching `.env`/`.env.*` other than `.env.example` is tracked in git — this used to be a "do a final git status scan" reminder, now it's a gate that can't be skipped by forgetting. (The `container-scan` Trivy job's `secret` scanner also covers this plus other secret patterns, but report-only — see Dependency scanning below.)
 - [ ] `ANTHROPIC_API_KEY` — and any other secret read via `os.getenv`/`env()` — is actually present in the deployed environment. `ANTHROPIC_API_KEY` and `REDIS_URL` are now listed in both `.env.example` (root and `backend/`), but a new secret added later needs the same treatment — don't assume it'll be noticed otherwise.
-- [ ] `EMAIL_BACKEND` in production is a real SMTP backend, **not** the console backend. The console backend prints full email bodies — including password-reset/verification links with their tokens — to stdout; that's fine in dev, a real leak if it ever ran in production.
+- [x] `EMAIL_BACKEND` in production is a real SMTP backend, **not** the console backend. The console backend prints full email bodies — including password-reset/verification links with their tokens — to stdout; that's fine in dev, a real leak if it ever ran in production. **Enforced at settings-load time** (`config/settings.py`, right after `ENVIRONMENT` is read): raises `ImproperlyConfigured` if `ENVIRONMENT=production` and `EMAIL_BACKEND` still contains `console` — same "refuse to start" treatment as `SECRET_KEY`/`JWT_SECRET_KEY` already get. Note: if this ever actually fires during `backend/entrypoint.sh`'s `migrate --noinput` step, Django's own management-command bootstrapping partially swallows the exception and surfaces a confusing downstream `settings.DATABASES is improperly configured` error instead of this check's clear message — the deploy still correctly fails either way (confirmed: raw `import config.wsgi`, gunicorn's actual boot path, shows the real message immediately), it's only the diagnostic clarity that's degraded on that one specific path. If you ever see that DATABASES error on deploy, check `EMAIL_BACKEND` (and `SECRET_KEY`/`JWT_SECRET_KEY`) first before assuming the database is actually misconfigured.
 - [ ] SMTP credentials use an app password, not a real account password.
 - [ ] No secret value appears in a log line, error message, or `AuditLog.metadata` — if you added a new `logger.exception`/`log_action` call, check what's actually being passed in.
 
@@ -61,7 +61,7 @@ Run through this before every production deploy — not just the first one. Seve
 
 ## Security monitoring
 
-- [ ] `SENTRY_DSN` is set in production if Sentry monitoring is wanted (unset in dev/CI is correct — nothing is sent anywhere without it). If set, confirm events are actually arriving in the Sentry project post-deploy, not just that the env var is present.
+- [ ] `SENTRY_DSN` is set in production if Sentry monitoring is wanted (unset in dev/CI is correct — nothing is sent anywhere without it). If set, confirm events are actually arriving in the Sentry project post-deploy, not just that the env var is present. **Now flagged automatically if missed**: `core/checks.py:production_monitoring_check` emits `core.W002` when `ENVIRONMENT=production` and `SENTRY_DSN` is unset — same mechanism/visibility as the `REDIS_URL` check above. Advisory only, since Sentry is explicitly optional.
 - [ ] A new `logger.exception`/`log_security_event`/`log_action` call doesn't pass a password, JWT, refresh/reset/verification token, OAuth `id_token`, or raw request body into its fields/metadata — same rule for all three of these, restated here because it's easy to reach for whichever one is closest at hand without re-checking.
 
 ## File uploads

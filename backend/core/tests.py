@@ -3,10 +3,12 @@ from unittest.mock import patch
 
 import cloudinary.exceptions
 import fitz
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from PIL import Image
@@ -993,3 +995,61 @@ class AdminUserDetailViewTests(APITestCase):
         self.assertEqual(entry.actor_id, self.admin.pk)
         self.assertFalse(entry.metadata['before']['is_staff'])
         self.assertTrue(entry.metadata['after']['is_staff'])
+
+
+class SecuritySettingsInvariantTests(TestCase):
+    """Codifies docs/SECURITY_CHECKLIST.md items that are 'already correctly
+    implemented' as permanent regression tests — a settings.py edit that
+    silently drifts one of these back to something unsafe now fails CI on
+    every push instead of only being caught at the next manual checklist
+    review."""
+
+    def test_cors_does_not_allow_all_origins(self):
+        self.assertFalse(getattr(settings, 'CORS_ALLOW_ALL_ORIGINS', False))
+
+    def test_cors_does_not_allow_credentials(self):
+        self.assertFalse(settings.CORS_ALLOW_CREDENTIALS)
+
+    def test_jwt_algorithm_is_pinned_to_hs256(self):
+        self.assertEqual(settings.SIMPLE_JWT['ALGORITHM'], 'HS256')
+
+    def test_expected_throttle_scopes_are_present(self):
+        rates = settings.REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']
+        for scope in (
+            'login', 'login_email', 'register', 'email_action', 'email_action_email',
+            'chat', 'team_join', 'user', 'anon',
+        ):
+            self.assertIn(scope, rates, f'{scope!r} missing from DEFAULT_THROTTLE_RATES')
+
+    def test_security_headers_are_set(self):
+        self.assertTrue(settings.SECURE_CONTENT_TYPE_NOSNIFF)
+        self.assertEqual(settings.X_FRAME_OPTIONS, 'DENY')
+
+    def test_exception_handler_is_wired(self):
+        self.assertEqual(
+            settings.REST_FRAMEWORK['EXCEPTION_HANDLER'], 'core.exceptions.security_aware_exception_handler',
+        )
+
+
+class ProductionMonitoringCheckTests(TestCase):
+    """core.checks.production_monitoring_check — advisory warnings that
+    surface in Render's deploy logs (entrypoint.sh's `migrate` runs system
+    checks by default). See core/apps.py:CoreConfig.ready for registration."""
+
+    def test_no_warnings_outside_production(self):
+        from core.checks import production_monitoring_check
+        with override_settings(ENVIRONMENT='development', REDIS_URL='', SENTRY_DSN=''):
+            self.assertEqual(production_monitoring_check(None), [])
+
+    def test_warns_when_redis_and_sentry_unset_in_production(self):
+        from core.checks import production_monitoring_check
+        with override_settings(ENVIRONMENT='production', REDIS_URL='', SENTRY_DSN=''):
+            warnings = production_monitoring_check(None)
+        self.assertEqual({w.id for w in warnings}, {'core.W001', 'core.W002'})
+
+    def test_no_warnings_when_both_set_in_production(self):
+        from core.checks import production_monitoring_check
+        with override_settings(
+            ENVIRONMENT='production', REDIS_URL='redis://localhost:6379/0', SENTRY_DSN='https://x@sentry.io/1',
+        ):
+            self.assertEqual(production_monitoring_check(None), [])

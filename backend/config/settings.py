@@ -23,6 +23,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 import cloudinary
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 import environ
@@ -198,6 +199,22 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
 ENVIRONMENT = env('ENVIRONMENT', default='development')
+
+# The console backend prints full email bodies — including password-reset
+# and email-verification links with their signed tokens — to stdout. Fine
+# in dev; a real credential/token leak (into deploy logs, log aggregators,
+# anyone with log access) if it were ever left on in production. Previously
+# only documented as a checklist item; enforced here the same way
+# SECRET_KEY/JWT_SECRET_KEY already refuse to start if unset, since this is
+# exactly that class of mistake — better to fail loudly at startup than
+# silently leak tokens to logs.
+if ENVIRONMENT == 'production' and 'console' in EMAIL_BACKEND.lower():
+    raise ImproperlyConfigured(
+        'EMAIL_BACKEND is the console backend in production — this would print password-reset/'
+        'verification links (with their tokens) to stdout instead of emailing them. Set '
+        'EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend and the EMAIL_HOST/'
+        'EMAIL_HOST_USER/EMAIL_HOST_PASSWORD vars in the production environment.'
+    )
 
 DATABASE_URL = (
     env('DATABASE_URL_PROD') if ENVIRONMENT == 'production' else env('DATABASE_URL_DEV')

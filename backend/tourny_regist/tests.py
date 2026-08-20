@@ -1,6 +1,8 @@
 import threading
 from datetime import timedelta
+from unittest.mock import patch
 
+import cloudinary.exceptions
 import fitz
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -826,6 +828,21 @@ class LifecycleTestBase(APITestCase):
     target), an admin, and a player."""
 
     def setUp(self):
+        # Tournament.company_registration_certificate/organizer_cnic_front/
+        # organizer_cnic_back go through CloudinarySignedStorage — creating a
+        # Tournament with real content for those fields (see
+        # TournamentDraftTests.test_submit_complete_draft_succeeds) calls the
+        # real Cloudinary SDK unless mocked, which only ever "worked" locally
+        # because every local .env has real Cloudinary credentials. CI has
+        # none, so this must be mocked the same way organizer/tests.py and
+        # core/tests.py already do for their own document-upload tests.
+        self.mock_cloudinary_upload = patch('cloudinary.uploader.upload').start()
+        self.mock_cloudinary_upload.return_value = {'public_id': 'test/fake-public-id'}
+        self.mock_cloudinary_resource = patch(
+            'cloudinary.api.resource', side_effect=cloudinary.exceptions.NotFound('not found'),
+        ).start()
+        self.addCleanup(patch.stopall)
+
         self.game = Game.objects.create(name='Lifecycle Game', genre='FPS')
 
         self.organizer_user = User.objects.create_user(email='lc-organizer@example.com', password='StrongPass123')

@@ -3,7 +3,12 @@ import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "./appauth";
 import { api } from "./api";
 
-export default function OrganizerOrAdminRoute() {
+// `requireOrganizer` skips the is_staff bypass below — use it for actions that
+// require an actual Organizer profile (e.g. creating a tournament, which the
+// backend's IsApprovedOrganizer permission ties to organizer_profile, not
+// is_staff), so staff without one aren't waved through the route only to hit
+// a 403 on submit.
+export default function OrganizerOrAdminRoute({ requireOrganizer = false, redirectTo = "/tournaments" }) {
   const { user, loading } = useAuth();
   const [checking, setChecking] = useState(true);
   const [allowed, setAllowed] = useState(false);
@@ -13,7 +18,7 @@ export default function OrganizerOrAdminRoute() {
       setChecking(false);
       return;
     }
-    if (user.is_staff) {
+    if (user.is_staff && !requireOrganizer) {
       setAllowed(true);
       setChecking(false);
       return;
@@ -23,7 +28,7 @@ export default function OrganizerOrAdminRoute() {
       .then((data) => setAllowed(data.status === "approved"))
       .catch(() => setAllowed(false))
       .finally(() => setChecking(false));
-  }, [user, loading]);
+  }, [user, loading, requireOrganizer]);
 
   if (loading || checking) {
     return (
@@ -38,7 +43,7 @@ export default function OrganizerOrAdminRoute() {
   }
 
   if (!allowed) {
-    return <Navigate to="/tournaments" replace />;
+    return <Navigate to={redirectTo} replace />;
   }
 
   return <Outlet />;

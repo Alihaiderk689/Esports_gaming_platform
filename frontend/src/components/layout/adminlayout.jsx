@@ -1,12 +1,14 @@
 import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { LayoutDashboard, Users, Shield, Gamepad2, Handshake, BookOpen, Trophy } from "lucide-react";
+import { LayoutDashboard, Users, Shield, Gamepad2, Handshake, BookOpen, Trophy, ShieldAlert, Flag } from "lucide-react";
 
 const TABS = [
   { label: "Overview", to: "/admin", icon: LayoutDashboard, end: true },
   { label: "Users", to: "/admin/users", icon: Users },
   { label: "Organizers", to: "/admin/organizers", icon: Shield },
   { label: "Tournaments", to: "/admin/tournaments", icon: Trophy },
+  { label: "Review Requests", to: "/admin/review-requests", icon: ShieldAlert },
+  { label: "Disputes", to: "/admin/disputes", icon: Flag },
   { label: "Games", to: "/admin/games", icon: Gamepad2 },
   { label: "Partners", to: "/admin/partners", icon: Handshake },
   { label: "Rulebooks", to: "/admin/rulebooks", icon: BookOpen },

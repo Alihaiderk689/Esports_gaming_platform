@@ -108,3 +108,34 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  container-scan:
+    name: Dependency & container vulnerability scan (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Filesystem mode: scans backend/requirements.txt and
+      # frontend/package-lock.json for known-vulnerable dependency versions,
+      # plus both Dockerfiles for misconfigurations (e.g. running as root —
+      # neither does; backend/Dockerfile explicitly drops to a non-root
+      # `appuser`). Complements Dependabot (.github/dependabot.yml), which
+      # opens PRs weekly, with a scan on every push/PR — Dependabot can miss a
+      # vulnerability disclosed *after* its weekly run but *before* the next
+      # one, since it only checks on its own schedule.
+      # exit-code 0 (report-only) deliberately, not 1: a stack this size
+      # (torch, transformers, chromadb, ...) will very likely surface
+      # existing CRITICAL/HIGH findings the first time this runs, and this
+      # should not silently start blocking every PR's merge the moment it's
+      # added. Triage the first report, then flip to exit-code: 1 once the
+      # backlog is either fixed or consciously accepted — see
+      # docs/SECURITY_CHECKLIST.md's Dependency scanning section.
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,config
+          severity: CRITICAL,HIGH
+          exit-code: 0

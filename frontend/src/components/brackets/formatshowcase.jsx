@@ -106,7 +106,7 @@ export default function FormatShowcase({ onSelect }) {
 
       <Section
         title="Double Elimination Tournaments"
-        desc="Every player gets a second chance. Losers drop into a separate bracket and the winners of both brackets meet in a grand final. Best for 4, 8, 16 or 32 players."
+        desc="Every player gets a second chance. Losers drop into a separate bracket and the winners of both brackets meet in a grand final. Works with any number of players, 4 and up."
         buttonLabel="Create Double Elimination Bracket"
         onClick={() => onSelect("double")}
       >
@@ -147,7 +147,7 @@ export default function FormatShowcase({ onSelect }) {
 
       <Section
         title="3-Game Guarantee Tournaments"
-        desc="Built on double elimination but tuned for events where every entry deserves real play time. Players who lose twice early drop into a guarantee bracket for a final match, so nobody leaves after just one or two games. Ideal for paid leagues and weekend cups (8, 16 or 32 players)."
+        desc="Built on double elimination but tuned for events where every entry deserves real play time. Players who lose twice early drop into a guarantee bracket for a final match, so nobody leaves after just one or two games. Works with any number of players, 8 and up."
         buttonLabel="Create 3-Game Guarantee Bracket"
         onClick={() => onSelect("guarantee3")}
       >

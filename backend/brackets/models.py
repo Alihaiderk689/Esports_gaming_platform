@@ -57,6 +57,14 @@ class Match(models.Model):
     score = models.CharField(max_length=50, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
 
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    organizer_notes = models.TextField(blank=True)
+    is_forfeit = models.BooleanField(default=False)
+    forfeited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='matches_forfeited',
+        null=True, blank=True, on_delete=models.SET_NULL,
+    )
+
     next_match = models.ForeignKey(
         'self', related_name='previous_matches', null=True, blank=True, on_delete=models.SET_NULL,
     )

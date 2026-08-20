@@ -23,6 +23,8 @@ import AdminOverview from "@/pages/adminoverview";
 import AdminUsers from "@/pages/adminusers";
 import AdminOrganizers from "@/pages/adminorganizers";
 import AdminTournaments from "@/pages/admintournaments";
+import AdminReviewRequests from "@/pages/adminreviewrequests";
+import AdminDisputes from "@/pages/admindisputes";
 import AdminGames from "@/pages/admingames";
 import AdminPartners from "@/pages/adminpartners";
 import AdminRulebooks from "@/pages/adminrulebooks";
@@ -82,7 +84,9 @@ const AuthenticatedApp = () => {
               <Route path="/my-tournaments" element={<MyTournaments />} />
               <Route path="/tournaments/:id/edit" element={<EditTournament />} />
             </Route>
-            <Route path="/tournaments/create" element={<CreateTournament />} />
+            <Route element={<OrganizerOrAdminRoute requireOrganizer redirectTo="/organizer" />}>
+              <Route path="/tournaments/create" element={<CreateTournament />} />
+            </Route>
             <Route path="/tournaments/:id" element={<TournamentDetail />} />
             <Route path="/tournaments/:id/bracket" element={<BracketPage />} />
             <Route path="/organizer" element={<Organizer />} />
@@ -94,6 +98,8 @@ const AuthenticatedApp = () => {
             <Route path="users" element={<AdminUsers />} />
             <Route path="organizers" element={<AdminOrganizers />} />
             <Route path="tournaments" element={<AdminTournaments />} />
+            <Route path="review-requests" element={<AdminReviewRequests />} />
+            <Route path="disputes" element={<AdminDisputes />} />
             <Route path="games" element={<AdminGames />} />
             <Route path="partners" element={<AdminPartners />} />
             <Route path="rulebooks" element={<AdminRulebooks />} />

@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link, useLocation } from "react-router-dom";
-import { ArrowLeft, Swords, Clock, Crown, ListOrdered, Loader2 } from "lucide-react";
+import {
+  ArrowLeft, Swords, Clock, Crown, ListOrdered, Loader2, Eye, RotateCcw, ArrowUpDown,
+  Settings2, Flag, Pencil, CalendarClock, StickyNote,
+} from "lucide-react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/appauth";
 
 const FORMAT_OPTIONS = [
   { key: "single", label: "Single Elimination" },
@@ -54,9 +58,245 @@ function MatchResultForm({ match, onSubmitResult }) {
   );
 }
 
-function MatchCard({ match, canManage, onSubmitResult }) {
+function MatchManagePanel({ match, actions }) {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const [forfeitPlayer, setForfeitPlayer] = useState("");
+  const [forfeitReason, setForfeitReason] = useState("");
+  const [overrideWinner, setOverrideWinner] = useState("");
+  const [overrideScore, setOverrideScore] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [scheduledAt, setScheduledAt] = useState(match.scheduled_at ? match.scheduled_at.slice(0, 16) : "");
+  const [notes, setNotes] = useState(null);
+  const [notesSaving, setNotesSaving] = useState(false);
+
+  const canForfeit = match.status === "ready" && match.player1 && match.player2;
+  const canOverride = match.status === "completed" && match.player1 && match.player2;
+
+  const openTab = (t) => {
+    setTab((cur) => (cur === t ? null : t));
+    setError("");
+    if (t === "notes" && notes === null) {
+      api.get(`/api/matches/${match.id}/notes/`).then((d) => setNotes(d.organizer_notes)).catch(() => setNotes(""));
+    }
+  };
+
+  const submitForfeit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await actions.onForfeit(match.id, { forfeiting_player: Number(forfeitPlayer), reason: forfeitReason });
+      setTab(null);
+    } catch (err) {
+      setError(err.message || "Could not record the forfeit.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitOverride = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await actions.onOverride(match.id, { winner: Number(overrideWinner), score: overrideScore, reason: overrideReason });
+      setTab(null);
+    } catch (err) {
+      setError(err.message || "Could not correct this result.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitSchedule = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await actions.onSchedule(match.id, { scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null });
+      setTab(null);
+    } catch (err) {
+      setError(err.message || "Could not schedule this match.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveNotes = async () => {
+    setNotesSaving(true);
+    setError("");
+    try {
+      await api.patch(`/api/matches/${match.id}/notes/`, { organizer_notes: notes });
+    } catch (err) {
+      setError(err.message || "Could not save notes.");
+    } finally {
+      setNotesSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 pt-2 border-t border-border/40" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+      >
+        <Settings2 className="w-3 h-3" /> Manage
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1.5">
+          <div className="flex flex-wrap gap-1">
+            {canForfeit && (
+              <button type="button" onClick={() => openTab("forfeit")} className={`text-[10px] px-1.5 py-0.5 rounded-md flex items-center gap-1 ${tab === "forfeit" ? "bg-destructive/20 text-destructive" : "bg-muted/40 text-muted-foreground hover:text-foreground"}`}>
+                <Flag className="w-2.5 h-2.5" /> Forfeit
+              </button>
+            )}
+            {canOverride && (
+              <button type="button" onClick={() => openTab("override")} className={`text-[10px] px-1.5 py-0.5 rounded-md flex items-center gap-1 ${tab === "override" ? "bg-primary/20 text-primary" : "bg-muted/40 text-muted-foreground hover:text-foreground"}`}>
+                <Pencil className="w-2.5 h-2.5" /> Correct
+              </button>
+            )}
+            <button type="button" onClick={() => openTab("schedule")} className={`text-[10px] px-1.5 py-0.5 rounded-md flex items-center gap-1 ${tab === "schedule" ? "bg-primary/20 text-primary" : "bg-muted/40 text-muted-foreground hover:text-foreground"}`}>
+              <CalendarClock className="w-2.5 h-2.5" /> Schedule
+            </button>
+            <button type="button" onClick={() => openTab("notes")} className={`text-[10px] px-1.5 py-0.5 rounded-md flex items-center gap-1 ${tab === "notes" ? "bg-primary/20 text-primary" : "bg-muted/40 text-muted-foreground hover:text-foreground"}`}>
+              <StickyNote className="w-2.5 h-2.5" /> Notes
+            </button>
+          </div>
+
+          {error && <p className="text-[10px] text-destructive">{error}</p>}
+
+          {tab === "forfeit" && (
+            <form onSubmit={submitForfeit} className="space-y-1">
+              <select value={forfeitPlayer} onChange={(e) => setForfeitPlayer(e.target.value)} required className="w-full text-[11px] px-2 py-1 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary">
+                <option value="">Forfeiting player…</option>
+                <option value={match.player1}>{match.player1_email}</option>
+                <option value={match.player2}>{match.player2_email}</option>
+              </select>
+              <input value={forfeitReason} onChange={(e) => setForfeitReason(e.target.value)} placeholder="Reason" required className="w-full text-[11px] px-2 py-1 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary" />
+              <button type="submit" disabled={saving} className="w-full text-[11px] py-1 rounded-lg bg-destructive text-destructive-foreground font-heading font-semibold disabled:opacity-50">
+                {saving ? "Saving…" : "Confirm Forfeit"}
+              </button>
+            </form>
+          )}
+
+          {tab === "override" && (
+            <form onSubmit={submitOverride} className="space-y-1">
+              <select value={overrideWinner} onChange={(e) => setOverrideWinner(e.target.value)} required className="w-full text-[11px] px-2 py-1 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary">
+                <option value="">Correct winner…</option>
+                <option value={match.player1}>{match.player1_email}</option>
+                <option value={match.player2}>{match.player2_email}</option>
+              </select>
+              <input value={overrideScore} onChange={(e) => setOverrideScore(e.target.value)} placeholder="Score (optional)" className="w-full text-[11px] px-2 py-1 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary" />
+              <input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="Reason (required)" required className="w-full text-[11px] px-2 py-1 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary" />
+              <button type="submit" disabled={saving} className="w-full text-[11px] py-1 rounded-lg bg-primary text-primary-foreground font-heading font-semibold disabled:opacity-50">
+                {saving ? "Saving…" : "Confirm Correction"}
+              </button>
+              <p className="text-[9px] text-muted-foreground">Only works if nothing downstream has been played yet.</p>
+            </form>
+          )}
+
+          {tab === "schedule" && (
+            <form onSubmit={submitSchedule} className="space-y-1">
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                className="w-full text-[11px] px-2 py-1 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary"
+              />
+              <button type="submit" disabled={saving} className="w-full text-[11px] py-1 rounded-lg bg-primary text-primary-foreground font-heading font-semibold disabled:opacity-50">
+                {saving ? "Saving…" : "Save Schedule"}
+              </button>
+            </form>
+          )}
+
+          {tab === "notes" && (
+            <div className="space-y-1">
+              {notes === null ? (
+                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+              ) : (
+                <>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Private organizer notes…"
+                    className="w-full text-[11px] px-2 py-1 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary"
+                  />
+                  <button type="button" onClick={saveNotes} disabled={notesSaving} className="w-full text-[11px] py-1 rounded-lg bg-primary text-primary-foreground font-heading font-semibold disabled:opacity-50">
+                    {notesSaving ? "Saving…" : "Save Notes"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MatchDisputeButton({ matchId }) {
+  const [open, setOpen] = useState(false);
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSaving(true);
+    setError("");
+    try {
+      await api.post(`/api/matches/${matchId}/disputes/`, { description });
+      setSubmitted(true);
+      setOpen(false);
+    } catch (err) {
+      setError(err.message || "Could not file this dispute.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (submitted) {
+    return <p className="mt-2 pt-2 border-t border-border/40 text-[10px] text-primary">Dispute filed for this match.</p>;
+  }
+
+  return (
+    <div className="mt-2 pt-2 border-t border-border/40" onClick={(e) => e.stopPropagation()}>
+      {!open ? (
+        <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive">
+          <Flag className="w-3 h-3" /> Dispute this match
+        </button>
+      ) : (
+        <form onSubmit={submit} className="space-y-1">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What went wrong?"
+            rows={2}
+            required
+            className="w-full text-[11px] px-2 py-1 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary"
+          />
+          {error && <p className="text-[10px] text-destructive">{error}</p>}
+          <button type="submit" disabled={saving || !description.trim()} className="w-full text-[11px] py-1 rounded-lg bg-destructive text-destructive-foreground font-heading font-semibold disabled:opacity-50">
+            {saving ? "Filing…" : "File Dispute"}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function MatchCard({ match, canManage, matchActions, currentUserId }) {
   const done = match.status === "completed";
   const canSubmit = canManage && match.status === "ready" && match.player1 && match.player2;
+  const isParticipant = currentUserId && (match.player1 === currentUserId || match.player2 === currentUserId);
   return (
     <div className={`w-56 shrink-0 rounded-xl border p-3 ${done ? "border-primary/40 bg-primary/5" : "border-border/60 glass"}`}>
       <div className="flex items-center justify-between mb-2">
@@ -78,13 +318,24 @@ function MatchCard({ match, canManage, onSubmitResult }) {
           <span className="truncate">{p.email || "TBD"}</span>
         </div>
       ))}
-      {match.score && <p className="mt-2 text-xs text-muted-foreground">Score: {match.score}</p>}
-      {canSubmit && <MatchResultForm match={match} onSubmitResult={onSubmitResult} />}
+      {match.is_forfeit ? (
+        <p className="mt-2 text-xs text-muted-foreground">Won by forfeit</p>
+      ) : (
+        match.score && <p className="mt-2 text-xs text-muted-foreground">Score: {match.score}</p>
+      )}
+      {match.scheduled_at && (
+        <p className="mt-1 text-[10px] text-muted-foreground flex items-center gap-1">
+          <CalendarClock className="w-3 h-3" /> {new Date(match.scheduled_at).toLocaleString()}
+        </p>
+      )}
+      {canSubmit && <MatchResultForm match={match} onSubmitResult={matchActions.onSubmitResult} />}
+      {canManage && <MatchManagePanel match={match} actions={matchActions} />}
+      {!canManage && isParticipant && done && <MatchDisputeButton matchId={match.id} />}
     </div>
   );
 }
 
-function RoundsRow({ rounds, finalRoundNumber, canManage, onSubmitResult }) {
+function RoundsRow({ rounds, finalRoundNumber, canManage, matchActions, currentUserId }) {
   return (
     <div className="flex gap-6 overflow-x-auto pb-4">
       {rounds.map((round) => (
@@ -95,11 +346,208 @@ function RoundsRow({ rounds, finalRoundNumber, canManage, onSubmitResult }) {
           </div>
           <div className="flex flex-col gap-4 justify-around flex-1">
             {round.matches.map((m) => (
-              <MatchCard key={m.id} match={m} canManage={canManage} onSubmitResult={onSubmitResult} />
+              <MatchCard key={m.id} match={m} canManage={canManage} matchActions={matchActions} currentUserId={currentUserId} />
             ))}
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function PairingPreview({ preview }) {
+  if (!preview) return null;
+  if (preview.error) {
+    return (
+      <p className="text-xs text-muted-foreground bg-muted/30 border border-border/60 rounded-lg px-3 py-2">
+        {preview.error}
+      </p>
+    );
+  }
+  return (
+    <div className="text-left rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2">
+      <p className="text-[11px] text-muted-foreground">
+        {preview.player_count} checked-in players
+        {preview.total_rounds != null && ` · ${preview.total_rounds} round${preview.total_rounds === 1 ? "" : "s"}`}
+        {preview.num_groups != null && ` · ${preview.num_groups} groups`}
+      </p>
+      {preview.round1 && (
+        <div className="space-y-1">
+          {preview.round1.map((m, i) => (
+            <div key={i} className="flex items-center justify-between text-xs px-2 py-1 rounded-md bg-background/60">
+              <span className={!m.player1 ? "text-muted-foreground italic" : ""}>{m.player1?.name || "Bye"}</span>
+              <span className="text-muted-foreground px-2">{m.is_bye ? "→ bye" : "vs"}</span>
+              <span className={!m.player2 ? "text-muted-foreground italic" : ""}>{m.player2?.name || "Bye"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SeedingPanel({ id, onClose }) {
+  const [regs, setRegs] = useState(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    api
+      .get(`/api/tournaments/${id}/seeding/`)
+      .then(setRegs)
+      .catch((e) => setError(e.message || "Could not load seeding."));
+  }, [id]);
+
+  const setSeed = (regId, value) => {
+    setRegs((prev) => prev.map((r) => (r.id === regId ? { ...r, seed: value === "" ? null : Number(value) } : r)));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setSaveError("");
+    try {
+      const payload = { seeds: regs.map((r) => ({ registration_id: r.id, seed: r.seed })) };
+      const updated = await api.post(`/api/tournaments/${id}/seeding/`, payload);
+      setRegs(updated);
+    } catch (e) {
+      setSaveError(e.message || "Could not save seeding.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass rounded-xl border border-border/60 p-4 text-left mb-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground">
+          Manual Seeding
+        </p>
+        <button onClick={onClose} className="text-xs text-muted-foreground hover:text-foreground">
+          Close
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground mb-3">
+        Lower numbers seed higher (seed 1 is top seed). Leave blank to fall back to registration order.
+      </p>
+      {error && <p className="text-xs text-destructive mb-3">{error}</p>}
+      {!regs && !error && (
+        <div className="flex justify-center py-6 text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" />
+        </div>
+      )}
+      {regs && regs.length === 0 && (
+        <p className="text-xs text-muted-foreground">No checked-in players yet.</p>
+      )}
+      {regs && regs.length > 0 && (
+        <div className="space-y-1.5 mb-3">
+          {regs.map((r) => (
+            <div key={r.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-muted/30">
+              <span className="text-sm truncate">{r.team_name || r.player_email}</span>
+              <input
+                type="number"
+                min={1}
+                value={r.seed ?? ""}
+                onChange={(e) => setSeed(r.id, e.target.value)}
+                placeholder="—"
+                className="w-16 px-2 py-1 rounded-md bg-background border border-border text-sm text-center outline-none focus:border-primary"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      {saveError && <p className="text-xs text-destructive mb-2">{saveError}</p>}
+      {regs && regs.length > 0 && (
+        <button
+          onClick={save}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-primary text-primary-foreground disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+          Save Seeding
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ResetBracketPanel({ id, onReset }) {
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const submit = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const result = await api.post(`/api/tournaments/${id}/brackets/reset/`, { reason });
+      if (result && result.detail) {
+        setNotice(result.detail);
+        setConfirming(false);
+      } else {
+        onReset();
+      }
+    } catch (e) {
+      setError(e.message || "Could not reset the bracket.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (notice) {
+    return (
+      <div className="mt-8 text-sm text-primary bg-primary/10 border border-primary/30 rounded-lg px-3 py-2">
+        {notice}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-8 pt-6 border-t border-border/40">
+      {!confirming ? (
+        <button
+          onClick={() => setConfirming(true)}
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive"
+        >
+          <RotateCcw className="w-3.5 h-3.5" /> Reset Bracket
+        </button>
+      ) : (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 max-w-md">
+          <p className="text-sm font-heading font-semibold mb-1">Reset this bracket?</p>
+          <p className="text-xs text-muted-foreground mb-3">
+            This permanently deletes all matches. If any real result has already been recorded, this will instead be
+            submitted for admin review.
+          </p>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Reason for resetting (required)"
+            rows={2}
+            className="w-full text-xs px-2.5 py-2 rounded-lg bg-background border border-border outline-none focus:border-primary mb-2"
+          />
+          {error && <p className="text-xs text-destructive mb-2">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={submit}
+              disabled={saving || !reason.trim()}
+              className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-destructive text-destructive-foreground disabled:opacity-50"
+            >
+              {saving ? "Resetting…" : "Confirm Reset"}
+            </button>
+            <button
+              onClick={() => {
+                setConfirming(false);
+                setError("");
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -140,14 +588,14 @@ function StandingsTable({ standings }) {
   );
 }
 
-function EliminationSections({ bracket, canManage, onSubmitResult }) {
+function EliminationSections({ bracket, canManage, matchActions, currentUserId }) {
   const losersRounds = bracket.rounds.losers;
   const guaranteeRounds = bracket.rounds.guarantee;
   return (
     <div className="space-y-8">
       <div>
         <SectionLabel>Winners Bracket</SectionLabel>
-        <RoundsRow rounds={bracket.rounds.winners} finalRoundNumber={bracket.total_rounds} canManage={canManage} onSubmitResult={onSubmitResult} />
+        <RoundsRow rounds={bracket.rounds.winners} finalRoundNumber={bracket.total_rounds} canManage={canManage} matchActions={matchActions} currentUserId={currentUserId} />
       </div>
       <div>
         <SectionLabel>Losers Bracket</SectionLabel>
@@ -155,18 +603,19 @@ function EliminationSections({ bracket, canManage, onSubmitResult }) {
           rounds={losersRounds}
           finalRoundNumber={losersRounds.length ? losersRounds[losersRounds.length - 1].round_number : null}
           canManage={canManage}
-          onSubmitResult={onSubmitResult}
+          matchActions={matchActions}
+          currentUserId={currentUserId}
         />
       </div>
       {guaranteeRounds && guaranteeRounds.length > 0 && (
         <div>
           <SectionLabel>Guarantee Round</SectionLabel>
-          <RoundsRow rounds={guaranteeRounds} finalRoundNumber={null} canManage={canManage} onSubmitResult={onSubmitResult} />
+          <RoundsRow rounds={guaranteeRounds} finalRoundNumber={null} canManage={canManage} matchActions={matchActions} currentUserId={currentUserId} />
         </div>
       )}
       <div>
         <SectionLabel>Grand Final</SectionLabel>
-        <RoundsRow rounds={bracket.rounds.grand_final} finalRoundNumber={1} canManage={canManage} onSubmitResult={onSubmitResult} />
+        <RoundsRow rounds={bracket.rounds.grand_final} finalRoundNumber={1} canManage={canManage} matchActions={matchActions} currentUserId={currentUserId} />
       </div>
     </div>
   );
@@ -174,6 +623,7 @@ function EliminationSections({ bracket, canManage, onSubmitResult }) {
 
 export default function BracketPage() {
   const { id } = useParams();
+  const { user } = useAuth();
   const location = useLocation();
   const backToTournamentState = { from: location.state?.from };
 
@@ -188,6 +638,10 @@ export default function BracketPage() {
   const [genError, setGenError] = useState("");
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const [showSeeding, setShowSeeding] = useState(false);
 
   const loadBracket = () => {
     setBracketState("loading");
@@ -212,6 +666,21 @@ export default function BracketPage() {
     loadBracket();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  const previewMatchups = async () => {
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const p = await api.get(`/api/tournaments/${id}/brackets/preview/`, {
+        query: { bracket_format: genFormat },
+      });
+      setPreview(p);
+    } catch (e) {
+      setPreviewError(e.message || "Could not load a preview.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   const generateBracket = async () => {
     setGenSaving(true);
@@ -258,6 +727,28 @@ export default function BracketPage() {
   const submitMatchResult = async (matchId, payload) => {
     await api.patch(`/api/matches/${matchId}/result/`, payload);
     loadBracket();
+  };
+
+  const forfeitMatch = async (matchId, payload) => {
+    await api.post(`/api/matches/${matchId}/forfeit/`, payload);
+    loadBracket();
+  };
+
+  const overrideMatch = async (matchId, payload) => {
+    await api.patch(`/api/matches/${matchId}/override/`, payload);
+    loadBracket();
+  };
+
+  const scheduleMatch = async (matchId, payload) => {
+    await api.patch(`/api/matches/${matchId}/schedule/`, payload);
+    loadBracket();
+  };
+
+  const matchActions = {
+    onSubmitResult: submitMatchResult,
+    onForfeit: forfeitMatch,
+    onOverride: overrideMatch,
+    onSchedule: scheduleMatch,
   };
 
   if (loading) {
@@ -336,7 +827,11 @@ export default function BracketPage() {
               <button
                 key={f.key}
                 type="button"
-                onClick={() => setGenFormat(f.key)}
+                onClick={() => {
+                  setGenFormat(f.key);
+                  setPreview(null);
+                  setPreviewError("");
+                }}
                 className={`px-3.5 py-1.5 rounded-lg text-sm font-heading font-semibold transition-colors ${
                   genFormat === f.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                 }`}
@@ -353,12 +848,12 @@ export default function BracketPage() {
           )}
           {genFormat === "double" && (
             <p className="text-xs text-muted-foreground mb-4">
-              Double elimination needs an exact power of two checked-in players (4, 8, 16, or 32).
+              Works with any number of players (minimum 4) — byes are seeded in automatically to fill out the bracket.
             </p>
           )}
           {genFormat === "guarantee3" && (
             <p className="text-xs text-muted-foreground mb-4">
-              3-game guarantee needs an exact power of two checked-in players, at least 8 (8, 16, or 32).
+              Works with any number of players (minimum 8) — byes are seeded in automatically to fill out the bracket.
             </p>
           )}
           {genFormat === "group_playoff" && (
@@ -379,12 +874,22 @@ export default function BracketPage() {
             </div>
           )}
 
+          <div className="mb-4">
+            <button
+              onClick={() => setShowSeeding((v) => !v)}
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
+            >
+              <ArrowUpDown className="w-3.5 h-3.5" /> {showSeeding ? "Hide manual seeding" : "Manage manual seeding"}
+            </button>
+          </div>
+          {showSeeding && <SeedingPanel id={id} onClose={() => setShowSeeding(false)} />}
+
           {genError && (
             <div className="mb-4 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2 inline-block">
               {genError}
             </div>
           )}
-          <div>
+          <div className="flex items-center justify-center gap-2 mb-4">
             <button
               onClick={generateBracket}
               disabled={genSaving}
@@ -393,7 +898,20 @@ export default function BracketPage() {
               {genSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Swords className="w-4 h-4" />}
               Generate Bracket
             </button>
+            <button
+              onClick={previewMatchups}
+              disabled={previewLoading}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-heading font-semibold border border-border hover:border-primary disabled:opacity-50"
+            >
+              {previewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+              Preview Matchups
+            </button>
           </div>
+
+          {previewError && (
+            <p className="text-xs text-destructive mb-4">{previewError}</p>
+          )}
+          {preview && <PairingPreview preview={preview} />}
         </div>
       )}
 
@@ -404,12 +922,12 @@ export default function BracketPage() {
       )}
 
       {bracketState === "ready" && bracket && (bracket.format === "double" || bracket.format === "guarantee3") && (
-        <EliminationSections bracket={bracket} canManage={tournament.can_manage} onSubmitResult={submitMatchResult} />
+        <EliminationSections bracket={bracket} canManage={tournament.can_manage} matchActions={matchActions} currentUserId={user?.id} />
       )}
 
       {bracketState === "ready" && bracket && (bracket.format === "round_robin" || bracket.format === "swiss") && (
         <div className="space-y-8">
-          <RoundsRow rounds={bracket.rounds} finalRoundNumber={bracket.total_rounds} canManage={tournament.can_manage} onSubmitResult={submitMatchResult} />
+          <RoundsRow rounds={bracket.rounds} finalRoundNumber={bracket.total_rounds} canManage={tournament.can_manage} matchActions={matchActions} currentUserId={user?.id} />
 
           {bracket.format === "swiss" && tournament.can_manage && (
             <div>
@@ -453,7 +971,7 @@ export default function BracketPage() {
               {Object.entries(bracket.rounds.groups).map(([label, rounds]) => (
                 <div key={label}>
                   <p className="text-sm font-heading font-semibold mb-2">Group {label}</p>
-                  <RoundsRow rounds={rounds} finalRoundNumber={null} canManage={tournament.can_manage} onSubmitResult={submitMatchResult} />
+                  <RoundsRow rounds={rounds} finalRoundNumber={null} canManage={tournament.can_manage} matchActions={matchActions} currentUserId={user?.id} />
                   <StandingsTable standings={bracket.standings?.[label]} />
                 </div>
               ))}
@@ -467,7 +985,8 @@ export default function BracketPage() {
                 rounds={bracket.rounds.playoff}
                 finalRoundNumber={Math.max(...bracket.rounds.playoff.map((r) => r.round_number))}
                 canManage={tournament.can_manage}
-                onSubmitResult={submitMatchResult}
+                matchActions={matchActions}
+                currentUserId={user?.id}
               />
             ) : (
               <div className="glass rounded-xl border border-border/60 p-6 text-center">
@@ -503,7 +1022,17 @@ export default function BracketPage() {
       )}
 
       {bracketState === "ready" && bracket && bracket.format === "single" && (
-        <RoundsRow rounds={bracket.rounds} finalRoundNumber={bracket.total_rounds} canManage={tournament.can_manage} onSubmitResult={submitMatchResult} />
+        <RoundsRow rounds={bracket.rounds} finalRoundNumber={bracket.total_rounds} canManage={tournament.can_manage} matchActions={matchActions} currentUserId={user?.id} />
+      )}
+
+      {bracketState === "ready" && bracket && tournament.can_manage && (
+        <ResetBracketPanel
+          id={id}
+          onReset={() => {
+            setBracket(null);
+            setBracketState("none");
+          }}
+        />
       )}
     </div>
   );

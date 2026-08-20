@@ -1,7 +1,53 @@
 import React, { useEffect, useState } from "react";
-import { Lock, ArrowRight, Loader2, ShieldCheck, Eye, EyeOff, UserCircle, AlertTriangle, Trash2 } from "lucide-react";
+import {
+  Lock, ArrowRight, Loader2, ShieldCheck, Eye, EyeOff, UserCircle, AlertTriangle, Trash2, LogOut,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
+
+function LogoutAllSessionsCard() {
+  const { logoutAllSessions } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!window.confirm("Log out of all devices? You'll need to sign in again here too.")) return;
+    setLoading(true);
+    setError("");
+    try {
+      await logoutAllSessions();
+    } catch (err) {
+      setError(err.message || "Could not log out of all devices.");
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="glass rounded-2xl border border-border/60 p-6 sm:p-8">
+      <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-green-500 grid place-items-center neon-border mb-5">
+        <LogOut className="w-6 h-6 text-background" strokeWidth={2.5} />
+      </div>
+      <h2 className="font-display font-bold text-xl mb-1">Log out of all devices</h2>
+      <p className="text-sm text-muted-foreground mb-6">
+        Signs this account out everywhere, including any other browser or device that's still signed in.
+        Use this if you think someone else might have access to your account.
+      </p>
+      {error && (
+        <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2 mb-4">
+          {error}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={submit}
+        disabled={loading}
+        className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-heading font-bold text-base bg-muted/40 border border-border hover:border-primary transition-colors disabled:opacity-60"
+      >
+        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Log out everywhere"}
+      </button>
+    </div>
+  );
+}
 
 function ProfileCard() {
   const { refreshUser } = useAuth();
@@ -319,6 +365,8 @@ export default function AccountSettings() {
           </button>
         </form>
       </div>
+
+      <LogoutAllSessionsCard />
 
       <DangerZone />
     </div>

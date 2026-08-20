@@ -3,7 +3,8 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/appauth";
 import { api } from "@/lib/api";
-import { Gamepad2, Menu, X, ChevronDown, LogOut, User as UserIcon, Trophy, LayoutGrid, Plus, ClipboardList, MessageSquare, Settings, ShieldCheck, Building2, Home, Info } from "lucide-react";
+import { Menu, X, ChevronDown, LogOut, User as UserIcon, Trophy, LayoutGrid, Plus, ClipboardList, MessageSquare, Settings, ShieldCheck, Building2, Home, Info } from "lucide-react";
+import Logo from "@/components/Logo";
 
 const PLAYER_NAV = [
   { label: "Home", to: "/", icon: Home, end: true },
@@ -57,11 +58,7 @@ export default function Navbar({ onToggleChat }) {
             to={user?.is_staff ? "/admin" : isOrganizer ? "/dashboard" : "/"}
             className="flex items-center gap-2.5 shrink-0 group"
           >
-            <div className="relative">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary to-green-500 grid place-items-center neon-border animate-glow">
-                <Gamepad2 className="w-5 h-5 text-background" strokeWidth={2.5} />
-              </div>
-            </div>
+            <Logo className="h-9 w-auto" />
             <div className="leading-none">
               <div className="font-display font-extrabold tracking-wider text-sm sm:text-base">
                 ESPORTS

@@ -8,6 +8,7 @@ urlpatterns = [
     path('organizer/upload-company/', views.OrganizerUploadCompanyView.as_view()),
     path('organizer/status/', views.OrganizerStatusView.as_view()),
     path('organizer/status/acknowledge/', views.OrganizerAcknowledgeStatusView.as_view()),
+    path('organizer/resubmit/', views.OrganizerResubmitView.as_view()),
     path('organizer/profile/', views.OrganizerProfileView.as_view()),
     path('organizer/dashboard/', views.OrganizerDashboardView.as_view()),
 

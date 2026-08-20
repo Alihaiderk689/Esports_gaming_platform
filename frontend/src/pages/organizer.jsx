@@ -20,7 +20,7 @@ function StatusBadge({ status }) {
   );
 }
 
-function StatusInterstitial({ approved, companyName, reason, onContinue }) {
+function StatusInterstitial({ approved, companyName, reason, onContinue, onRetry }) {
   return (
     <div className="max-w-lg mx-auto px-4 sm:px-6 py-16 sm:py-24 text-center">
       <div
@@ -42,12 +42,29 @@ function StatusInterstitial({ approved, companyName, reason, onContinue }) {
           ? `${companyName ? `${companyName}, ` : ""}you're officially an organizer on Esports Pakistan. You can now create and run public tournaments.`
           : `Unfortunately, your organizer application was rejected.${reason ? ` Reason: ${reason}` : ""}`}
       </p>
-      <button
-        onClick={onContinue}
-        className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-heading font-bold text-base bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow"
-      >
-        Click to continue <ArrowRight className="w-4 h-4" />
-      </button>
+      {approved ? (
+        <button
+          onClick={onContinue}
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-heading font-bold text-base bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow"
+        >
+          Click to continue <ArrowRight className="w-4 h-4" />
+        </button>
+      ) : (
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <button
+            onClick={onRetry}
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-heading font-bold text-base bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow"
+          >
+            Try again as an organizer <ArrowRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onContinue}
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-heading font-bold text-base glass hover:neon-border transition-all"
+          >
+            Continue as a player
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -332,6 +349,9 @@ export default function Organizer() {
   const [profile, setProfile] = useState(null); // null (not yet applied) once loaded
   const [loadError, setLoadError] = useState("");
 
+  const [resubmitting, setResubmitting] = useState(false);
+  const [resubmitError, setResubmitError] = useState("");
+
   const [profileForm, setProfileForm] = useState({ company_name: "", phone_number: "", address: "" });
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
@@ -451,6 +471,19 @@ export default function Organizer() {
     }
   };
 
+  const resubmit = async () => {
+    setResubmitting(true);
+    setResubmitError("");
+    try {
+      const updated = await api.post("/api/organizer/resubmit/", {});
+      applyProfile(updated);
+    } catch (err) {
+      setResubmitError(err.message || "Could not resubmit your application.");
+    } finally {
+      setResubmitting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-20 text-muted-foreground">
@@ -489,12 +522,30 @@ export default function Organizer() {
       }
       navigate(approved ? "/dashboard" : "/");
     };
+    // Stays on this page rather than navigating away — acknowledging drops
+    // hasUnseenOutcome so the next render falls through to the normal
+    // editable dashboard below, pre-filled with the rejected application's
+    // details plus the "Resubmit application" action.
+    const acknowledgeAndRetry = async () => {
+      try {
+        await api.post("/api/organizer/status/acknowledge/", {});
+      } catch {
+        /* best-effort — still let them retry with whatever's already loaded */
+      }
+      try {
+        const full = await api.get("/api/organizer/dashboard/");
+        applyProfile(full);
+      } catch {
+        /* keep showing the interstitial rather than a broken half-loaded state */
+      }
+    };
     return (
       <StatusInterstitial
         approved={approved}
         companyName={profile.company_name}
         reason={profile.rejection_reason}
         onContinue={acknowledgeAndContinue}
+        onRetry={acknowledgeAndRetry}
       />
     );
   }
@@ -518,9 +569,28 @@ export default function Organizer() {
           </p>
         </div>
       )}
-      {profile.status === "rejected" && profile.rejection_reason && (
-        <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-4 py-3">
-          <span className="font-heading font-semibold">Reason: </span>{profile.rejection_reason}
+      {profile.status === "rejected" && (
+        <div className="glass rounded-2xl border border-border/60 p-6 space-y-4">
+          {profile.rejection_reason && (
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-4 py-3">
+              <span className="font-heading font-semibold">Reason: </span>{profile.rejection_reason}
+            </div>
+          )}
+          <p className="text-sm text-muted-foreground">
+            Update whatever needs fixing below (details, documents, or payout info), then resubmit for review.
+          </p>
+          {resubmitError && (
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
+              {resubmitError}
+            </div>
+          )}
+          <button
+            onClick={resubmit}
+            disabled={resubmitting}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-heading font-bold text-sm bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow disabled:opacity-50"
+          >
+            {resubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Resubmit application"}
+          </button>
         </div>
       )}
 

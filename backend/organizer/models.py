@@ -21,8 +21,15 @@ class Organizer(models.Model):
         JAZZCASH = 'jazzcash', 'JazzCash'
         BANK = 'bank', 'Bank Account'
 
+    # PROTECT, not CASCADE: an approved organizer can self-delete their
+    # account via PlayerMeView (core/views.py) like any other user, and
+    # CASCADE here would silently take every tournament they've ever run —
+    # and everything downstream of those (registrations, brackets, matches,
+    # disputes) for every *other* player who participated — down with it.
+    # Django refuses the delete instead; core.views.PlayerMeView.destroy()
+    # turns that into a clear 400 rather than a bare 500.
     user = models.OneToOneField(
-        settings.AUTH_USER_MODEL, related_name='organizer_profile', on_delete=models.CASCADE,
+        settings.AUTH_USER_MODEL, related_name='organizer_profile', on_delete=models.PROTECT,
     )
     company_name = models.CharField(max_length=200)
     company_registration_number = models.CharField(max_length=100, blank=True)

@@ -17,8 +17,16 @@ class IsPublicOrOwner(permissions.BasePermission):
     def has_object_permission(self, request, view, tournament):
         if tournament.status == Tournament.Status.APPROVED and tournament.is_published:
             return True
+        if not request.user.is_authenticated:
+            return False
         if request.user.is_staff:
             return True
+        # created_by is nullable (SET_NULL — see Tournament.created_by's
+        # docstring) so it survives the creator's account being deleted.
+        # Without the is_authenticated guard above, an anonymous request's
+        # `request.user.pk` is also None, and `None == None` would
+        # incorrectly grant "owner" access to *any* unpublished tournament
+        # whose creator's account happens to have been deleted.
         return tournament.created_by_id == request.user.pk
 
 

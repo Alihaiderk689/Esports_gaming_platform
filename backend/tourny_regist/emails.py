@@ -66,6 +66,41 @@ def send_announcement_emails(tournament, announcement):
             )
 
 
+def send_reschedule_email(tournament, old_starts_at, new_starts_at, reason):
+    """Notify every registered player when an organizer reschedules the
+    tournament. Never raises, same reasoning as send_announcement_emails —
+    the reschedule is already persisted on the Tournament by the time this
+    runs, so an SMTP failure here must not surface as an error anywhere."""
+    try:
+        players = _registered_players(tournament)
+    except Exception:
+        logger.exception('Failed to look up registered players for tournament %s', tournament.pk)
+        return
+
+    link = f'{settings.FRONTEND_URL}/tournaments/{tournament.pk}'
+    old_line = f'{old_starts_at:%b %d, %Y %I:%M %p}' if old_starts_at else 'unscheduled'
+    new_line = f'{new_starts_at:%b %d, %Y %I:%M %p}'
+    for player in players:
+        try:
+            send_mail(
+                subject=f'[{tournament.name}] Schedule changed',
+                message=(
+                    f'The start date for {tournament.name} has changed.\n\n'
+                    f'Old: {old_line}\n'
+                    f'New: {new_line}\n\n'
+                    f'Reason: {reason}\n\n'
+                    f'View the tournament: {link}'
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[player.email],
+            )
+        except Exception:
+            logger.exception(
+                'Failed to send reschedule email to user %s for tournament %s',
+                player.pk, tournament.pk,
+            )
+
+
 def send_tournament_win_email(tournament, champion):
     """Congratulate the champion by email once brackets.services.finalize_tournament_champion
     has decided the tournament. Never raises, same reasoning as send_announcement_emails —

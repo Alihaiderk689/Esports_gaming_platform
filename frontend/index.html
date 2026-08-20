@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="manifest" href="/manifest.json" />
     <title>Esports Pakistan — Compete. Conquer. Connect.</title>
@@ -14,14 +15,21 @@
       Baseline defense-in-depth against XSS: restricts which origins can supply
       executable script. 'unsafe-inline' is required in style-src (not script-src)
       because framer-motion drives its animations via inline style="" attributes
-      on DOM nodes — without it, every animation on the site breaks. connect-src
-      stays broad (https: + localhost) since the API origin is environment-
-      dependent (VITE_API_URL) and can't be pinned to one value at build time.
+      on DOM nodes — without it, every animation on the site breaks. img-src
+      names Cloudinary's delivery domain explicitly (where uploaded/organizer
+      images are actually served from) but still falls back to a broader
+      https: for cover images/game logos, which in production may be served
+      from the API origin's own static/media handling instead (see
+      docs/ARCHITECTURE.md) — same reasoning for connect-src staying broad:
+      the API origin is environment-dependent (VITE_API_URL) and can't be
+      pinned to one exact value at build time. Once the real production
+      hostnames are fixed, both can be narrowed further — see
+      docs/SECURITY_CHECKLIST.md's Security headers / CSP section.
       No accounts.google.com entries needed anywhere here: Google sign-in is a
       plain top-level redirect (window.location.href) now, not an embedded
       script/iframe, so CSP's script-src/frame-src never come into play for it.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https: http://localhost:8000; connect-src 'self' https: http://localhost:8000; object-src 'none'; base-uri 'self';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://res.cloudinary.com https: http://localhost:8000; connect-src 'self' https: http://localhost:8000; object-src 'none'; base-uri 'self';" />
   </head>
   <body>
     <div id="root"></div>

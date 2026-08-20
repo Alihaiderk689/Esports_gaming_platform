@@ -1,18 +1,22 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { Loader2, ChevronRight, Clock, CheckCircle2, XCircle, Calendar, MapPin, Wifi } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Loader2, ChevronRight, Clock, CheckCircle2, XCircle, Calendar, MapPin, Wifi, FileEdit, Ban, Copy } from "lucide-react";
 import { api } from "@/lib/api";
 
 const STATUS_META = {
+  draft: { label: "Draft", icon: FileEdit, className: "bg-muted text-muted-foreground" },
   pending: { label: "Pending Admin Approval", icon: Clock, className: "bg-muted text-muted-foreground" },
   approved: { label: "Approved", icon: CheckCircle2, className: "bg-primary/10 text-primary" },
   rejected: { label: "Rejected", icon: XCircle, className: "bg-destructive/10 text-destructive" },
+  cancelled: { label: "Cancelled", icon: Ban, className: "bg-destructive/10 text-destructive" },
 };
 
 export default function MyTournaments() {
+  const navigate = useNavigate();
   const [tournaments, setTournaments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [duplicatingId, setDuplicatingId] = useState(null);
 
   useEffect(() => {
     api
@@ -21,6 +25,20 @@ export default function MyTournaments() {
       .catch((e) => setError(e.message || "Could not load your tournaments."))
       .finally(() => setLoading(false));
   }, []);
+
+  const duplicate = async (e, id) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDuplicatingId(id);
+    setError("");
+    try {
+      const copy = await api.post(`/api/tournaments/${id}/duplicate/`);
+      navigate(`/tournaments/${copy.id}/edit`);
+    } catch (err) {
+      setError(err.message || "Could not duplicate this tournament.");
+      setDuplicatingId(null);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-10 sm:py-14">
@@ -46,12 +64,16 @@ export default function MyTournaments() {
         <div className="space-y-3">
           {tournaments.map((t) => {
             const meta = STATUS_META[t.status] || STATUS_META.pending;
+            const editable = t.status === "draft" || t.status === "rejected";
             return (
-              <Link
+              <div
                 key={t.id}
-                to={`/tournaments/${t.id}`}
-                state={{ from: "my-tournaments" }}
                 className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 sm:p-5 rounded-xl glass border border-border/60 hover:neon-border transition-all"
+              >
+              <Link
+                to={editable ? `/tournaments/${t.id}/edit` : `/tournaments/${t.id}`}
+                state={{ from: "my-tournaments" }}
+                className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center gap-3"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -70,7 +92,9 @@ export default function MyTournaments() {
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3.5 h-3.5" />
-                      {new Date(t.start_date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                      {t.start_date
+                        ? new Date(t.start_date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+                        : "No date set yet"}
                     </span>
                     {t.mode === "online" ? (
                       <span className="flex items-center gap-1"><Wifi className="w-3.5 h-3.5" /> Online{t.platform ? ` · ${t.platform}` : ""}</span>
@@ -84,9 +108,24 @@ export default function MyTournaments() {
                   {t.status === "rejected" && t.rejection_reason && (
                     <p className="mt-1.5 text-xs text-destructive">Reason: {t.rejection_reason}</p>
                   )}
+                  {t.status === "cancelled" && t.cancellation_reason && (
+                    <p className="mt-1.5 text-xs text-destructive">Cancelled: {t.cancellation_reason}</p>
+                  )}
                 </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
               </Link>
+                {t.status !== "cancelled" && (
+                  <button
+                    type="button"
+                    disabled={duplicatingId === t.id}
+                    onClick={(e) => duplicate(e, t.id)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-muted hover:bg-muted/70 shrink-0 disabled:opacity-50"
+                  >
+                    {duplicatingId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Copy className="w-3.5 h-3.5" />}
+                    Duplicate
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>

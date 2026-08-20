@@ -23,6 +23,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 import cloudinary
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 import environ
@@ -122,6 +123,7 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
         'rest_framework.throttling.AnonRateThrottle',
     ),
+    'EXCEPTION_HANDLER': 'core.exceptions.security_aware_exception_handler',
     'DEFAULT_THROTTLE_RATES': {
         'login': '10/min',
         'register': '20/hour',
@@ -130,6 +132,12 @@ REST_FRAMEWORK = {
         'team_join': '20/min',
         'user': '1000/min',
         'anon': '200/min',
+        # Keyed by the submitted email/account identifier rather than client
+        # IP (see core/throttling.py) — layered on top of the IP-scoped rates
+        # above so a login/reset attack distributed across many IPs still
+        # hits a per-account ceiling.
+        'login_email': '10/min',
+        'email_action_email': '5/hour',
     },
 }
 
@@ -146,7 +154,12 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ORIGINS', default=['http://localhost:5173'])
-CORS_ALLOW_CREDENTIALS = True
+# The frontend authenticates with a bearer token in the Authorization header,
+# never a cookie — no view relies on a cross-site cookie, so there is nothing
+# for CORS_ALLOW_CREDENTIALS=True to legitimately unlock. Keeping it False
+# means a browser will never attach cookies to a cross-origin request to this
+# API even if one were accidentally set later.
+CORS_ALLOW_CREDENTIALS = False
 
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=['http://localhost:5173'])
 
@@ -158,6 +171,7 @@ SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=0 if DEBUG else 315
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=not DEBUG)
 SECURE_HSTS_PRELOAD = env.bool('SECURE_HSTS_PRELOAD', default=not DEBUG)
 SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 X_FRAME_OPTIONS = 'DENY'
 
 ROOT_URLCONF = 'config.urls'
@@ -186,6 +200,22 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 ENVIRONMENT = env('ENVIRONMENT', default='development')
 
+# The console backend prints full email bodies — including password-reset
+# and email-verification links with their signed tokens — to stdout. Fine
+# in dev; a real credential/token leak (into deploy logs, log aggregators,
+# anyone with log access) if it were ever left on in production. Previously
+# only documented as a checklist item; enforced here the same way
+# SECRET_KEY/JWT_SECRET_KEY already refuse to start if unset, since this is
+# exactly that class of mistake — better to fail loudly at startup than
+# silently leak tokens to logs.
+if ENVIRONMENT == 'production' and 'console' in EMAIL_BACKEND.lower():
+    raise ImproperlyConfigured(
+        'EMAIL_BACKEND is the console backend in production — this would print password-reset/'
+        'verification links (with their tokens) to stdout instead of emailing them. Set '
+        'EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend and the EMAIL_HOST/'
+        'EMAIL_HOST_USER/EMAIL_HOST_PASSWORD vars in the production environment.'
+    )
+
 DATABASE_URL = (
     env('DATABASE_URL_PROD') if ENVIRONMENT == 'production' else env('DATABASE_URL_DEV')
 )
@@ -193,7 +223,33 @@ DATABASE_URL = (
 DATABASES = {
     'default': env.db_url_config(DATABASE_URL),
 }
-DATABASES['default'].setdefault('OPTIONS', {}).pop('pgbouncer', None)
+_db_options = DATABASES['default'].setdefault('OPTIONS', {})
+_db_options.pop('pgbouncer', None)
+# Encryption in transit was previously entirely up to whoever set
+# DATABASE_URL_PROD (e.g. an `sslmode=require` query param) — a deployment
+# with that param simply omitted would connect over plaintext with no error.
+# Enforce it here for production instead of only documenting it; a
+# `sslmode`/`ssl` already present in the URL (parsed into _db_options above)
+# is left untouched, so this only fills the gap, it doesn't fight the URL.
+if ENVIRONMENT == 'production':
+    _db_options.setdefault('sslmode', 'require')
+
+
+# Cache — used for DRF throttling (ScopedRateThrottle/UserRateThrottle/
+# AnonRateThrottle all read/write counters here). Without REDIS_URL this
+# falls back to Django's default LocMemCache, which is *per-process*: behind
+# a multi-worker/multi-instance deployment (gunicorn -w N, multiple Render
+# instances, ...) each process keeps its own counter, so the effective rate
+# limit is (configured rate) x (worker count), not the configured rate. Set
+# REDIS_URL in production to give every process a shared, correct counter.
+REDIS_URL = env('REDIS_URL', default='')
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        },
+    }
 
 
 # Password validation
@@ -253,7 +309,37 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 
     'SIGNING_KEY': env('JWT_SECRET_KEY'),
+    # Pinned explicitly rather than relying on SimpleJWT's own default: a
+    # symmetric algorithm here must always mean SIGNING_KEY, never a
+    # public/private keypair, and locking this down means a future settings
+    # change can't silently widen what algorithm a token is accepted under.
+    'ALGORITHM': 'HS256',
 }
+# Optional error/security-event monitoring. Unset in dev and CI (no DSN —
+# nothing is sent anywhere); set SENTRY_DSN in production to get alerted on
+# unhandled 5xx errors and the security-relevant 401/403/429s
+# core.exceptions.security_aware_exception_handler logs (Sentry's logging
+# integration below captures ERROR-level log records as events, and the
+# 'security' logger stays INFO-level by design — see LOGGING below — so
+# route actual alerting off the log aggregator's own rules on that logger,
+# not off Sentry event volume, unless you deliberately want every one of
+# those to also page).
+SENTRY_DSN = env('SENTRY_DSN', default='')
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        environment=ENVIRONMENT,
+        # Errors only — no performance/trace sampling, and no automatic PII
+        # (request bodies, cookies, user email) attached to events beyond
+        # what's explicitly captured elsewhere in this codebase.
+        traces_sample_rate=0.0,
+        send_default_pii=False,
+    )
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -280,6 +366,15 @@ LOGGING = {
             'propagate': False,
         },
         'core': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # core.security_events.log_security_event's target — kept as its own
+        # logger (rather than reusing 'core') so a log aggregator/Sentry
+        # alert rule can filter on it specifically without picking up every
+        # other core.* log line too.
+        'security': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

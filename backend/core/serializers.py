@@ -4,8 +4,8 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from core.models import Follow, PendingRegistration
-from core.validators import clean_person_name
+from core.models import Dispute, DisputeEvidence, Follow, PendingRegistration
+from core.validators import clean_person_name, validate_document_file
 from organizer.models import Organizer
 from organizer.serializers import validate_payout_fields
 
@@ -134,6 +134,10 @@ class LoginSerializer(TokenObtainPairSerializer):
 
 class GoogleLoginSerializer(serializers.Serializer):
     id_token = serializers.CharField()
+    # Round-tripped through Google's own `state` param and back — see
+    # core.views.GoogleOAuthStartView/GoogleLoginView for why this is what
+    # makes the nonce check server-verifiable instead of client-side-only.
+    state = serializers.CharField()
 
 
 class LogoutSerializer(serializers.Serializer):
@@ -251,3 +255,84 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['is_active', 'is_staff']
+
+
+class DisputeEvidenceSerializer(serializers.ModelSerializer):
+    uploaded_by_email = serializers.EmailField(source='uploaded_by.email', read_only=True)
+
+    class Meta:
+        model = DisputeEvidence
+        fields = ['id', 'file', 'uploaded_by_email', 'uploaded_at']
+        read_only_fields = fields
+
+
+class DisputeSerializer(serializers.ModelSerializer):
+    filed_by_email = serializers.EmailField(source='filed_by.email', read_only=True)
+    resolved_by_email = serializers.EmailField(source='resolved_by.email', read_only=True)
+    target_label = serializers.SerializerMethodField()
+    target_tournament_id = serializers.SerializerMethodField()
+    evidence = DisputeEvidenceSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Dispute
+        fields = [
+            'id', 'filed_by_email', 'target_label', 'target_tournament_id', 'description',
+            'status', 'escalated_to_admin', 'escalated_at', 'resolution_notes',
+            'resolved_by_email', 'resolved_at', 'created_at', 'evidence',
+        ]
+        read_only_fields = fields
+
+    # Local imports, not module-level: core doesn't otherwise depend on
+    # tourny_regist/brackets (they depend on core, not the reverse) — this
+    # mirrors the same local-import convention used everywhere else in this
+    # codebase that a lower-level app needs to read a higher-level one.
+    def _is_tournament_target(self, obj):
+        from tourny_regist.models import Tournament
+        return obj.content_type.model_class() is Tournament
+
+    def get_target_label(self, obj):
+        if self._is_tournament_target(obj):
+            return obj.target.name
+        match = obj.target
+        return f'{match.tournament.name} — Round {match.round_number} match'
+
+    def get_target_tournament_id(self, obj):
+        if self._is_tournament_target(obj):
+            return obj.object_id
+        return obj.target.tournament_id
+
+
+class DisputeCreateSerializer(serializers.Serializer):
+    description = serializers.CharField()
+
+    def validate_description(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('A description is required.')
+        return value
+
+
+class DisputeStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=[Dispute.Status.UNDER_REVIEW, Dispute.Status.RESOLVED, Dispute.Status.DISMISSED],
+    )
+    resolution_notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        needs_notes = attrs['status'] in (Dispute.Status.RESOLVED, Dispute.Status.DISMISSED)
+        if needs_notes and not attrs.get('resolution_notes', '').strip():
+            raise serializers.ValidationError({
+                'resolution_notes': 'Resolution notes are required when resolving or dismissing a dispute.',
+            })
+        return attrs
+
+
+class DisputeEvidenceCreateSerializer(serializers.Serializer):
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        # ModelSerializer would run the FileField's validators= automatically;
+        # this is a plain Serializer (DisputeEvidence is created manually in the
+        # view, not via .save() on this serializer), so the same check the model
+        # field declares is invoked explicitly here instead.
+        validate_document_file(value)
+        return value

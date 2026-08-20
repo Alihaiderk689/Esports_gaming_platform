@@ -9,9 +9,11 @@ const formatMoney = (n) => `PKR ${Number(n || 0).toLocaleString()}`;
 
 const STATUSES = [
   { value: "", label: "All" },
+  { value: "draft", label: "Draft" },
   { value: "pending", label: "Pending" },
   { value: "approved", label: "Approved" },
   { value: "rejected", label: "Rejected" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 function InfoRow({ label, value }) {
@@ -40,7 +42,7 @@ function TournamentDetailDialog({ tournament, onClose, onPreview, onDecide, savi
               <InfoRow label="Mode" value={tournament.mode} />
               <InfoRow label="Bracket format" value={tournament.bracket_format} />
               <InfoRow label="Team size" value={tournament.team_size} />
-              <InfoRow label="Max players" value={tournament.max_participants} />
+              <InfoRow label="Max participants" value={tournament.max_participants} />
               <InfoRow label="Registration fee" value={formatMoney(tournament.registration_fee)} />
               <InfoRow label="Prize pool" value={formatMoney(tournament.prize_pool)} />
               <InfoRow label="Registration deadline" value={formatDate(tournament.registration_deadline)} />
@@ -99,7 +101,7 @@ function TournamentDetailDialog({ tournament, onClose, onPreview, onDecide, savi
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
 
-              {tournament.status !== "approved" && (
+              {tournament.status === "pending" && (
                 <div className="flex flex-col items-end gap-2">
                   <div className="flex gap-2">
                     <button
@@ -227,7 +229,7 @@ export default function AdminTournaments() {
                       className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
                         t.status === "approved"
                           ? "bg-primary/20 text-primary"
-                          : t.status === "rejected"
+                          : t.status === "rejected" || t.status === "cancelled"
                           ? "bg-destructive/20 text-destructive"
                           : "bg-muted text-muted-foreground"
                       }`}
@@ -249,7 +251,7 @@ export default function AdminTournaments() {
                   )}
                 </div>
 
-                {t.status !== "approved" && (
+                {t.status === "pending" && (
                   <div className="flex flex-col items-end gap-2">
                     <div className="flex gap-2">
                       <button

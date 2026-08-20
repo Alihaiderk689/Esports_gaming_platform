@@ -9,9 +9,11 @@ from core.validators import validate_document_file, validate_phone_number
 
 class Tournament(models.Model):
     class Status(models.TextChoices):
+        DRAFT = 'draft', 'Draft'
         PENDING = 'pending', 'Pending Admin Approval'
         APPROVED = 'approved', 'Approved'
         REJECTED = 'rejected', 'Rejected'
+        CANCELLED = 'cancelled', 'Cancelled'
 
     class Mode(models.TextChoices):
         ONLINE = 'online', 'Online'
@@ -29,8 +31,13 @@ class Tournament(models.Model):
     name = models.CharField(max_length=200)
     cover_image = models.ImageField(upload_to='tournaments/covers/%Y/%m/', blank=True, null=True)
     game = models.ForeignKey('games.Game', related_name='tournaments', on_delete=models.CASCADE)
+    # PROTECT: an Organizer with tournaments on record should never be
+    # deletable outright — see Organizer.user's docstring for the same
+    # reasoning one level up (deleting the *user* is already blocked there;
+    # this is the equivalent backstop if an Organizer row is ever deleted
+    # directly instead).
     organizer = models.ForeignKey(
-        'organizer.Organizer', related_name='tournaments', on_delete=models.CASCADE, null=True, blank=True,
+        'organizer.Organizer', related_name='tournaments', on_delete=models.PROTECT, null=True, blank=True,
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, related_name='created_tournaments',
@@ -54,6 +61,15 @@ class Tournament(models.Model):
     rejection_reason = models.TextField(blank=True)
     is_published = models.BooleanField(default=False)
 
+    # Set by tourny_regist.lifecycle.cancel_tournament. cancelled_by uses
+    # SET_NULL (not CASCADE) so deleting the actor's account doesn't delete
+    # cancellation history — same rationale as champion/created_by above.
+    cancellation_reason = models.TextField(blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='+', null=True, blank=True, on_delete=models.SET_NULL,
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
     mode = models.CharField(max_length=10, choices=Mode.choices, default=Mode.ONLINE)
     bracket_format = models.CharField(max_length=20, choices=BracketFormat.choices, default=BracketFormat.SINGLE)
     team_size = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
@@ -66,11 +82,21 @@ class Tournament(models.Model):
     )
 
     registration_deadline = models.DateTimeField(null=True, blank=True)
-    starts_at = models.DateTimeField()
+    # Nullable so a draft can exist before the organizer has picked a start
+    # date; every non-draft path (submit for approval, direct creation via
+    # TournamentApplicationSerializer) still requires it — see
+    # tourny_regist.lifecycle.validate_tournament_fields.
+    starts_at = models.DateTimeField(null=True, blank=True)
     ends_at = models.DateTimeField(null=True, blank=True)
+    check_in_start = models.DateTimeField(null=True, blank=True)
+    check_in_end = models.DateTimeField(null=True, blank=True)
 
     max_participants = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    min_participants = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
     is_registration_open = models.BooleanField(default=True)
+
+    game_version = models.CharField(max_length=50, blank=True)
+    server_region = models.CharField(max_length=100, blank=True)
 
     # Venue (relevant when mode is offline/hybrid)
     venue_name = models.CharField(max_length=200, blank=True)
@@ -130,8 +156,29 @@ class Tournament(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(ends_at__isnull=True) | models.Q(starts_at__isnull=True) | models.Q(ends_at__gte=models.F('starts_at')),
+                name='tournament_ends_at_after_starts_at',
+            ),
+            models.CheckConstraint(
+                check=(
+                    models.Q(min_participants__isnull=True)
+                    | models.Q(max_participants__isnull=True)
+                    | models.Q(min_participants__lte=models.F('max_participants'))
+                ),
+                name='tournament_min_lte_max_participants',
+            ),
+        ]
+
     def __str__(self):
         return self.name
+
+    def current_rule_version(self):
+        """The latest published TournamentRuleVersion, or None if the organizer
+        has never published one — most tournaments, since this is opt-in."""
+        return self.rule_versions.order_by('-version').first()
 
 
 class Announcement(models.Model):
@@ -159,6 +206,45 @@ class Announcement(models.Model):
         return f'{self.title} ({self.tournament_id})'
 
 
+class TournamentRuleVersion(models.Model):
+    """A published snapshot of a tournament's rules. Publishing never edits an
+    existing row — it creates the next `version` — so a past version stays
+    exactly what it was when someone acknowledged it (Registration.
+    accepted_rules_version records which one), and organizers get a real
+    changelog instead of a single mutable rules blob.
+
+    Split into named sections rather than one freeform text field so each
+    concern (format, conduct, scoring, penalties) can be read, diffed, and
+    required independently — "structured," not just versioned."""
+
+    tournament = models.ForeignKey(Tournament, related_name='rule_versions', on_delete=models.CASCADE)
+    version = models.PositiveIntegerField()
+    match_format_rules = models.TextField(blank=True)
+    conduct_rules = models.TextField(blank=True)
+    scoring_rules = models.TextField(blank=True)
+    penalties_and_disqualification = models.TextField(blank=True)
+    additional_notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['tournament', 'version'], name='unique_tournament_rule_version'),
+        ]
+        ordering = ['-version']
+
+    def __str__(self):
+        return f'Rules v{self.version} for tournament {self.tournament_id}'
+
+    def is_empty(self):
+        return not any([
+            self.match_format_rules.strip(), self.conduct_rules.strip(), self.scoring_rules.strip(),
+            self.penalties_and_disqualification.strip(), self.additional_notes.strip(),
+        ])
+
+
 def _generate_invite_code():
     return get_random_string(8).upper()
 
@@ -171,6 +257,16 @@ class Team(models.Model):
     )
     invite_code = models.CharField(max_length=10, unique=True, default=_generate_invite_code)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # Set by tourny_regist.lifecycle.lock_team_roster / unlock_team_roster.
+    # Locking blocks TeamJoinView/TeamLeaveView; unlocking is staff-only (see
+    # that view) since re-opening a roster after competitive activity has
+    # started is exactly the kind of change spec section 12 wants gated.
+    is_locked = models.BooleanField(default=False)
+    locked_at = models.DateTimeField(null=True, blank=True)
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='+', null=True, blank=True, on_delete=models.SET_NULL,
+    )
 
     class Meta:
         constraints = [
@@ -202,6 +298,8 @@ class Registration(models.Model):
         PENDING = 'pending', 'Pending Payment Review'
         APPROVED = 'approved', 'Approved'
         REJECTED = 'rejected', 'Rejected'
+        CANCELLED = 'cancelled', 'Cancelled by Organizer'
+        DISQUALIFIED = 'disqualified', 'Disqualified'
 
     tournament = models.ForeignKey(Tournament, related_name='registrations', on_delete=models.CASCADE)
     player = models.ForeignKey(
@@ -211,8 +309,31 @@ class Registration(models.Model):
         Team, related_name='registration', null=True, blank=True, on_delete=models.SET_NULL,
     )
 
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.APPROVED)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.APPROVED)
     rejection_reason = models.TextField(blank=True)
+
+    # Set by tourny_regist.lifecycle.cancel_registration — an organizer-
+    # initiated soft-cancel, distinct from a player's own self-withdrawal
+    # (RegistrationDeleteView, a hard delete of their own row).
+    cancellation_reason = models.TextField(blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='+', null=True, blank=True, on_delete=models.SET_NULL,
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    # Set by match-administration disqualification actions (brackets stage).
+    disqualification_reason = models.TextField(blank=True)
+    disqualified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, related_name='+', null=True, blank=True, on_delete=models.SET_NULL,
+    )
+    disqualified_at = models.DateTimeField(null=True, blank=True)
+
+    # Manual bracket seed (1 = top seed). Null means "no manual seed" — see
+    # brackets.services.seed_players, which falls back to registration order
+    # for anyone without one. Organizer-settable only before a bracket exists
+    # (tourny_regist.views.TournamentSeedingView) — once one does, reseeding
+    # requires resetting it first (brackets.services.reset_bracket).
+    seed = models.PositiveIntegerField(null=True, blank=True)
 
     full_name = models.CharField(max_length=150, blank=True)
     gaming_username = models.CharField(max_length=100, blank=True)
@@ -226,6 +347,12 @@ class Registration(models.Model):
     platform_username = models.CharField(max_length=100, blank=True)
     accepted_rules = models.BooleanField(default=False)
     accepted_code_of_conduct = models.BooleanField(default=False)
+    # Which TournamentRuleVersion.version the player actually agreed to at
+    # registration time (see RegistrationCreateSerializer.create) — plain int,
+    # not a FK, so it stays meaningful even if that exact version row is ever
+    # pruned. Null means either no versioned rules existed yet when they
+    # registered, or (team registration) acceptance isn't collected at all.
+    accepted_rules_version = models.PositiveIntegerField(null=True, blank=True)
     payment_proof = models.FileField(
         upload_to='registrations/payment_proof/%Y/%m/', storage=CloudinarySignedStorage(),
         validators=[validate_document_file], blank=True, null=True,

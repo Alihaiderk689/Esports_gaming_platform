@@ -77,6 +77,27 @@ class OrganizerAcknowledgeStatusView(APIView):
         return Response(OrganizerStatusSerializer(organizer).data)
 
 
+class OrganizerResubmitView(APIView):
+    """Puts a rejected application back in front of the admin. Only valid from
+    'rejected' - a pending application is already awaiting review, and an
+    approved one has nothing to resubmit. The applicant is expected to have
+    already fixed whatever caused the rejection (editing profile fields /
+    re-uploading documents via the existing endpoints, which don't check
+    status) before calling this."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        organizer = _get_organizer(request.user)
+        if organizer.status != Organizer.Status.REJECTED:
+            raise ValidationError({'detail': 'Only a rejected application can be resubmitted.'})
+        organizer.status = Organizer.Status.PENDING
+        organizer.rejection_reason = ''
+        organizer.last_seen_status = Organizer.Status.PENDING
+        organizer.save(update_fields=['status', 'rejection_reason', 'last_seen_status'])
+        return Response(OrganizerProfileSerializer(organizer).data)
+
+
 class OrganizerProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

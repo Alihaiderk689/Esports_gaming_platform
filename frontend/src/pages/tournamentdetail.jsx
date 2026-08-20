@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, Trophy, Gamepad2, Calendar, Users, Loader2, Swords, Clock, CheckCircle2, UserCheck,
   Copy, LogOut, Shield, Wallet, Award, MapPin, Globe, Phone, Mail, Link2, Upload, Trash2, Megaphone, Plus,
+  Download, Ban, Flag, AlertTriangle, BookOpen,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
@@ -569,6 +570,684 @@ function RegistrationDetailDialog({ registration, tournament, onClose, onPreview
   );
 }
 
+const REGISTRATION_STATUS_META = {
+  approved: "bg-primary/10 text-primary",
+  rejected: "bg-destructive/10 text-destructive",
+  cancelled: "bg-destructive/10 text-destructive",
+  disqualified: "bg-destructive/10 text-destructive",
+  pending: "bg-muted text-muted-foreground",
+};
+
+function TeamHistoryList({ teamId }) {
+  const [history, setHistory] = useState(null);
+  useEffect(() => {
+    api.get(`/api/teams/${teamId}/history/`).then(setHistory).catch(() => setHistory([]));
+  }, [teamId]);
+  if (!history) {
+    return <p className="text-xs text-muted-foreground py-2"><Loader2 className="w-3.5 h-3.5 animate-spin inline" /></p>;
+  }
+  if (history.length === 0) return <p className="text-xs text-muted-foreground py-2">No history yet.</p>;
+  return (
+    <div className="space-y-1 py-2">
+      {history.map((h) => (
+        <div key={h.id} className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{h.action}</span>
+          {h.reason && <span> — {h.reason}</span>}
+          <span className="ml-1">({new Date(h.created_at).toLocaleString()})</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TeamSubstituteForm({ team, onSubbed, onCancel }) {
+  const [outgoing, setOutgoing] = useState("");
+  const [incomingEmail, setIncomingEmail] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const matches = await api.get("/api/players/", { query: { search: incomingEmail } });
+      const results = matches.results || matches;
+      const incoming = results.find((p) => p.email?.toLowerCase() === incomingEmail.trim().toLowerCase());
+      if (!incoming) {
+        setError("No player found with that exact email.");
+        return;
+      }
+      const updated = await api.post(`/api/teams/${team.id}/substitute/`, {
+        outgoing_player_id: Number(outgoing),
+        incoming_player_id: incoming.id,
+        reason,
+      });
+      onSubbed(updated);
+    } catch (err) {
+      setError(err.message || "Could not substitute this player.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-2 py-2">
+      <select
+        value={outgoing}
+        onChange={(e) => setOutgoing(e.target.value)}
+        required
+        className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary"
+      >
+        <option value="">Outgoing player…</option>
+        {team.members.map((m) => (
+          <option key={m.player_id} value={m.player_id}>{m.email}</option>
+        ))}
+      </select>
+      <input
+        value={incomingEmail}
+        onChange={(e) => setIncomingEmail(e.target.value)}
+        placeholder="Incoming player's exact email"
+        required
+        className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary"
+      />
+      <textarea
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Reason (required)"
+        required
+        rows={2}
+        className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary"
+      />
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-primary text-primary-foreground disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Confirm Substitution"}
+        </button>
+        <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold text-muted-foreground hover:text-foreground">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function TeamRosterRow({ team, isStaff, onChange }) {
+  const [locking, setLocking] = useState(false);
+  const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [showSub, setShowSub] = useState(false);
+
+  const toggleLock = async () => {
+    setLocking(true);
+    setError("");
+    try {
+      const action = team.is_locked ? "unlock" : "lock";
+      const updated = await api.post(`/api/teams/${team.id}/${action}/`, {});
+      onChange(updated);
+    } catch (e) {
+      setError(e.message || "Could not update the roster lock.");
+    } finally {
+      setLocking(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-border/60 glass p-3">
+      <div className="flex items-center justify-between gap-3">
+        <button type="button" onClick={() => setExpanded((v) => !v)} className="flex items-center gap-2 text-left">
+          <Shield className="w-4 h-4 text-primary shrink-0" />
+          <span className="font-heading font-semibold text-sm">{team.name}</span>
+          <span className="text-xs text-muted-foreground">({team.members.length} members)</span>
+        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-heading font-bold uppercase ${team.is_locked ? "bg-accent/10 text-accent" : "bg-muted text-muted-foreground"}`}>
+            {team.is_locked ? "Locked" : "Unlocked"}
+          </span>
+          {(!team.is_locked || isStaff) && (
+            <button
+              onClick={toggleLock}
+              disabled={locking}
+              className="text-xs font-heading font-semibold text-primary hover:underline disabled:opacity-50"
+            >
+              {locking ? "…" : team.is_locked ? "Unlock" : "Lock"}
+            </button>
+          )}
+        </div>
+      </div>
+      {error && <p className="text-xs text-destructive mt-1">{error}</p>}
+      {expanded && (
+        <div className="mt-2 pt-2 border-t border-border/40">
+          <div className="space-y-1 mb-2">
+            {team.members.map((m) => (
+              <div key={m.player_id} className="text-xs text-muted-foreground flex items-center gap-1.5">
+                {m.email} {m.is_captain && <span className="text-primary font-medium">(Captain)</span>}
+              </div>
+            ))}
+          </div>
+          {isStaff && (
+            <div className="flex gap-3 mb-1">
+              <button
+                type="button"
+                onClick={() => setShowSub((v) => !v)}
+                className="text-xs text-muted-foreground hover:text-primary"
+              >
+                {showSub ? "Cancel substitution" : "Substitute a player"}
+              </button>
+            </div>
+          )}
+          {showSub && (
+            <TeamSubstituteForm
+              team={team}
+              onCancel={() => setShowSub(false)}
+              onSubbed={(updated) => {
+                onChange(updated);
+                setShowSub(false);
+              }}
+            />
+          )}
+          <details className="mt-1">
+            <summary className="text-xs text-muted-foreground hover:text-primary cursor-pointer select-none">Roster history</summary>
+            <TeamHistoryList teamId={team.id} />
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamRosterPanel({ tournamentId, isStaff }) {
+  const [teams, setTeams] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.get(`/api/tournaments/${tournamentId}/teams/`)
+      .then(setTeams)
+      .catch((e) => setError(e.message || "Could not load teams."));
+  }, [tournamentId]);
+
+  const updateTeam = (updated) => {
+    setTeams((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  };
+
+  if (error) return <p className="text-sm text-destructive">{error}</p>;
+  if (!teams) {
+    return (
+      <div className="flex justify-center py-8 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin" />
+      </div>
+    );
+  }
+  if (teams.length === 0) {
+    return <div className="glass rounded-xl border border-border/60 p-6 text-center text-sm text-muted-foreground">No teams yet.</div>;
+  }
+  return (
+    <div className="space-y-2">
+      {teams.map((t) => (
+        <TeamRosterRow key={t.id} team={t} isStaff={isStaff} onChange={updateTeam} />
+      ))}
+    </div>
+  );
+}
+
+function DisputeFileForm({ tournamentId }) {
+  const [open, setOpen] = useState(false);
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await api.post(`/api/tournaments/${tournamentId}/disputes/`, { description });
+      setSubmitted(true);
+      setOpen(false);
+      setDescription("");
+    } catch (err) {
+      setError(err.message || "Could not file this dispute.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (submitted) {
+    return (
+      <div className="mt-3 text-sm text-primary bg-primary/10 border border-primary/30 rounded-lg px-3 py-2">
+        Your dispute has been filed. The organizer (or an admin, if you escalate it) will review it.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive"
+        >
+          <Flag className="w-3.5 h-3.5" /> Report an issue
+        </button>
+      ) : (
+        <form onSubmit={submit} className="rounded-xl border border-border/60 glass p-3 max-w-md space-y-2">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Describe the issue you'd like to raise about this tournament…"
+            rows={3}
+            required
+            className="w-full text-sm px-2.5 py-2 rounded-lg bg-background border border-border outline-none focus:border-primary"
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={saving || !description.trim()}
+              className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-primary text-primary-foreground disabled:opacity-50"
+            >
+              {saving ? "Filing…" : "File Dispute"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function DisputeRow({ dispute, onDecide, onEscalate, saving }) {
+  const [notes, setNotes] = useState("");
+  const [action, setAction] = useState(null);
+  const canDecide = dispute.status === "open" || dispute.status === "under_review";
+
+  return (
+    <div className="rounded-xl border border-border/60 glass p-3">
+      <div className="flex items-center gap-2 flex-wrap mb-1">
+        <span
+          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+            dispute.status === "resolved" ? "bg-primary/20 text-primary"
+            : dispute.status === "dismissed" ? "bg-destructive/20 text-destructive"
+            : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {dispute.status.replace("_", " ")}
+        </span>
+        {dispute.escalated_to_admin && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-destructive/10 text-destructive">
+            <AlertTriangle className="w-3 h-3" /> Escalated to admin
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground">{dispute.filed_by_email}</span>
+      </div>
+      <p className="text-sm">{dispute.description}</p>
+      {!canDecide && dispute.resolution_notes && (
+        <p className="text-xs text-muted-foreground mt-1">Resolution: {dispute.resolution_notes}</p>
+      )}
+      {canDecide && !dispute.escalated_to_admin && (
+        <div className="mt-2">
+          {!action ? (
+            <div className="flex gap-2">
+              <button onClick={() => setAction("resolved")} className="text-xs px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20">
+                Resolve
+              </button>
+              <button onClick={() => setAction("dismissed")} className="text-xs px-2 py-1 rounded-md bg-destructive/10 text-destructive hover:bg-destructive/20">
+                Dismiss
+              </button>
+              <button onClick={() => onEscalate(dispute)} className="text-xs px-2 py-1 rounded-md text-muted-foreground hover:text-foreground">
+                Escalate to admin
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <input
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Resolution notes"
+                className="flex-1 text-xs px-2 py-1 rounded-md bg-muted/40 border border-border outline-none focus:border-primary"
+              />
+              <button
+                onClick={() => onDecide(dispute, action, notes)}
+                disabled={saving || !notes.trim()}
+                className="text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-50"
+              >
+                Confirm
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {canDecide && dispute.escalated_to_admin && (
+        <p className="text-xs text-muted-foreground mt-2">Awaiting admin review — you can no longer resolve this directly.</p>
+      )}
+    </div>
+  );
+}
+
+function TournamentDisputesPanel({ tournamentId }) {
+  const [disputes, setDisputes] = useState(null);
+  const [error, setError] = useState("");
+  const [savingId, setSavingId] = useState(null);
+
+  useEffect(() => {
+    api.get(`/api/tournaments/${tournamentId}/disputes/`).then(setDisputes).catch((e) => setError(e.message || "Could not load disputes."));
+  }, [tournamentId]);
+
+  const decide = async (dispute, newStatus, resolutionNotes) => {
+    setSavingId(dispute.id);
+    try {
+      const updated = await api.patch(`/api/disputes/${dispute.id}/status/`, { status: newStatus, resolution_notes: resolutionNotes });
+      setDisputes((list) => list.map((d) => (d.id === dispute.id ? updated : d)));
+    } catch (e) {
+      setError(e.message || "Could not update this dispute.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const escalate = async (dispute) => {
+    setSavingId(dispute.id);
+    try {
+      const updated = await api.post(`/api/disputes/${dispute.id}/escalate/`);
+      setDisputes((list) => list.map((d) => (d.id === dispute.id ? updated : d)));
+    } catch (e) {
+      setError(e.message || "Could not escalate this dispute.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  if (error) return <p className="text-sm text-destructive">{error}</p>;
+  if (!disputes) {
+    return (
+      <div className="flex justify-center py-6 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin" />
+      </div>
+    );
+  }
+  if (disputes.length === 0) {
+    return <div className="glass rounded-xl border border-border/60 p-6 text-center text-sm text-muted-foreground">No disputes filed for this tournament.</div>;
+  }
+  return (
+    <div className="space-y-2">
+      {disputes.map((d) => (
+        <DisputeRow key={d.id} dispute={d} onDecide={decide} onEscalate={escalate} saving={savingId === d.id} />
+      ))}
+    </div>
+  );
+}
+
+const RULE_SECTIONS = [
+  { key: "match_format_rules", label: "Match Format" },
+  { key: "conduct_rules", label: "Conduct" },
+  { key: "scoring_rules", label: "Scoring" },
+  { key: "penalties_and_disqualification", label: "Penalties & Disqualification" },
+  { key: "additional_notes", label: "Additional Notes" },
+];
+
+function RulesPublishForm({ tournamentId, onPublished, onCancel }) {
+  const [fields, setFields] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const rules = await api.post(`/api/tournaments/${tournamentId}/rules/`, fields);
+      onPublished(rules);
+    } catch (err) {
+      setError(err.message || "Could not publish these rules.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      {RULE_SECTIONS.map((s) => (
+        <div key={s.key}>
+          <label className="block text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground mb-1">{s.label}</label>
+          <textarea
+            value={fields[s.key] || ""}
+            onChange={(e) => setFields((f) => ({ ...f, [s.key]: e.target.value }))}
+            rows={3}
+            className="w-full text-sm px-3 py-2 rounded-lg bg-muted/40 border border-border outline-none focus:border-primary"
+          />
+        </div>
+      ))}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-4 py-2 rounded-lg text-sm font-heading font-semibold bg-primary text-primary-foreground disabled:opacity-50"
+        >
+          {saving ? "Publishing…" : "Publish New Version"}
+        </button>
+        <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg text-sm font-heading font-semibold text-muted-foreground hover:text-foreground">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function RulesHistoryList({ tournamentId }) {
+  const [history, setHistory] = useState(null);
+  useEffect(() => {
+    api.get(`/api/tournaments/${tournamentId}/rules/history/`).then(setHistory).catch(() => setHistory([]));
+  }, [tournamentId]);
+  if (!history) return <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />;
+  if (history.length === 0) return <p className="text-sm text-muted-foreground">No versions published yet.</p>;
+  return (
+    <div className="space-y-3">
+      {history.map((v) => (
+        <div key={v.id} className="rounded-lg border border-border/60 p-3">
+          <p className="text-xs font-heading font-bold text-muted-foreground mb-1">
+            Version {v.version} · {new Date(v.created_at).toLocaleString()} · {v.created_by_name}
+          </p>
+          {RULE_SECTIONS.map((s) => v[s.key] && (
+            <p key={s.key} className="text-sm mt-1"><span className="font-semibold">{s.label}: </span>{v[s.key]}</p>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TournamentRulesSection({ tournamentId, canManage }) {
+  const [current, setCurrent] = useState(undefined);
+  const [error, setError] = useState("");
+  const [showPublish, setShowPublish] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  useEffect(() => {
+    api.get(`/api/tournaments/${tournamentId}/rules/`).then(setCurrent).catch((e) => setError(e.message || "Could not load rules."));
+  }, [tournamentId]);
+
+  if (error) return null;
+  if (current === undefined) {
+    return (
+      <div className="flex justify-center py-6 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {current ? (
+        <div className="glass rounded-xl border border-border/60 p-5 space-y-3">
+          <p className="text-xs text-muted-foreground">Version {current.version} · Published {new Date(current.created_at).toLocaleDateString()}</p>
+          {RULE_SECTIONS.map((s) => current[s.key] && (
+            <div key={s.key}>
+              <p className="text-xs font-heading font-bold uppercase tracking-wider text-muted-foreground mb-1">{s.label}</p>
+              <p className="text-sm whitespace-pre-wrap">{current[s.key]}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        !canManage && <div className="glass rounded-xl border border-border/60 p-6 text-center text-sm text-muted-foreground">No rules have been published for this tournament yet.</div>
+      )}
+
+      {canManage && (
+        <div className="mt-3 flex gap-4">
+          <button onClick={() => setShowPublish((v) => !v)} className="text-xs text-muted-foreground hover:text-primary">
+            {showPublish ? "Cancel" : current ? "Publish New Version" : "Publish Rules"}
+          </button>
+          <button onClick={() => setShowHistory((v) => !v)} className="text-xs text-muted-foreground hover:text-primary">
+            {showHistory ? "Hide history" : "View history"}
+          </button>
+        </div>
+      )}
+
+      {canManage && showPublish && (
+        <div className="mt-3">
+          <RulesPublishForm
+            tournamentId={tournamentId}
+            onCancel={() => setShowPublish(false)}
+            onPublished={(rules) => {
+              setCurrent(rules);
+              setShowPublish(false);
+            }}
+          />
+        </div>
+      )}
+
+      {canManage && showHistory && (
+        <div className="mt-3">
+          <RulesHistoryList tournamentId={tournamentId} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RegistrationRow({ registration: r, tournament, onOpenDetail, onCheckIn, checkingIn, onCancel, cancelling }) {
+  const [showCancelForm, setShowCancelForm] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const canCancel = r.status !== "cancelled" && r.status !== "disqualified";
+
+  const confirmCancel = () => {
+    onCancel(r.id, cancelReason.trim());
+    setShowCancelForm(false);
+    setCancelReason("");
+  };
+
+  return (
+    <>
+      <tr className="border-t border-border/30">
+        <td
+          onClick={onOpenDetail}
+          className="py-2.5 pl-4 pr-2 font-medium cursor-pointer hover:text-primary transition-colors"
+          title="View full registration details"
+        >
+          {tournament.team_size > 1 ? (r.team_name || "—") : r.player_email}
+        </td>
+        {tournament.team_size > 1 && <td className="py-2.5 pr-2 text-muted-foreground">{r.player_email}</td>}
+        <td className="py-2.5 pr-2 text-muted-foreground">{new Date(r.registered_at).toLocaleString()}</td>
+        <td className="py-2.5 pr-2">
+          <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${REGISTRATION_STATUS_META[r.status] || REGISTRATION_STATUS_META.pending}`}>
+            {r.status}
+          </span>
+          {r.is_no_show && (
+            <span className="ml-1 inline-flex items-center text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-accent/10 text-accent">
+              No-show
+            </span>
+          )}
+        </td>
+        <td className="py-2.5 pr-2">
+          {r.checked_in ? (
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                <CheckCircle2 className="w-3 h-3" /> Checked in
+              </span>
+              <button
+                onClick={() => onCheckIn(r.id, false)}
+                disabled={checkingIn}
+                className="text-[11px] text-muted-foreground hover:text-destructive underline decoration-dotted disabled:opacity-50"
+              >
+                {checkingIn ? <Loader2 className="w-3 h-3 animate-spin" /> : "Undo"}
+              </button>
+            </div>
+          ) : r.status === "rejected" || r.status === "cancelled" || r.status === "disqualified" ? (
+            <span className="text-[11px] text-muted-foreground capitalize">{r.status}</span>
+          ) : tournament.registration_fee > 0 && r.status !== "approved" ? (
+            <span
+              className="text-[11px] text-muted-foreground"
+              title="Payment must be approved before this player can be checked in."
+            >
+              Awaiting payment approval
+            </span>
+          ) : (
+            <button
+              onClick={() => onCheckIn(r.id, true)}
+              disabled={checkingIn}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-heading font-semibold bg-primary text-primary-foreground disabled:opacity-50"
+            >
+              {checkingIn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Check in"}
+            </button>
+          )}
+        </td>
+        <td className="py-2.5 pr-4">
+          {canCancel && (
+            <button
+              onClick={() => setShowCancelForm((s) => !s)}
+              disabled={cancelling}
+              className="inline-flex items-center gap-1 text-[11px] text-destructive/80 hover:text-destructive disabled:opacity-50"
+            >
+              <Ban className="w-3 h-3" /> Cancel
+            </button>
+          )}
+        </td>
+      </tr>
+      {showCancelForm && (
+        <tr className="border-t border-border/30 bg-destructive/5">
+          <td colSpan={6} className="py-3 px-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Reason for cancelling this registration"
+                className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg bg-muted/40 border border-border text-sm outline-none focus:border-destructive"
+              />
+              <button
+                onClick={confirmCancel}
+                disabled={cancelling || !cancelReason.trim()}
+                className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-destructive text-destructive-foreground disabled:opacity-50"
+              >
+                {cancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Confirm Cancel"}
+              </button>
+              <button
+                onClick={() => setShowCancelForm(false)}
+                disabled={cancelling}
+                className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-muted disabled:opacity-50"
+              >
+                Back
+              </button>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 const ANNOUNCEMENT_CATEGORY_META = {
   match_timing: { label: "Match Timing" },
   delay: { label: "Delay" },
@@ -721,6 +1400,7 @@ function AnnouncementsSection({ tournamentId, canManage }) {
 
 export default function TournamentDetail() {
   const { id } = useParams();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const cameFromMyTournaments = location.state?.from === "my-tournaments";
@@ -743,6 +1423,11 @@ export default function TournamentDetail() {
   const [reviewError, setReviewError] = useState("");
   const [previewDoc, setPreviewDoc] = useState(null);
   const [detailReg, setDetailReg] = useState(null);
+  const [regSearch, setRegSearch] = useState("");
+  const [regStatusFilter, setRegStatusFilter] = useState("");
+  const [cancelNotice, setCancelNotice] = useState("");
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   useEffect(() => {
     setLoading(true);
@@ -840,6 +1525,57 @@ export default function TournamentDetail() {
       setReviewingId(null);
     }
   };
+
+  const organizerCancelRegistration = async (regId, reason) => {
+    setReviewingId(regId);
+    setReviewError("");
+    setCancelNotice("");
+    try {
+      const resp = await api.post(`/api/registrations/${regId}/cancel/`, { reason });
+      if (resp.status === "cancelled") {
+        setRegistrations((list) => list.map((r) => (r.id === regId ? resp : r)));
+        setDetailReg((d) => (d && d.id === regId ? resp : d));
+      } else {
+        setCancelNotice(resp.detail);
+      }
+    } catch (e) {
+      setReviewError(e.message || "Could not cancel this registration.");
+    } finally {
+      setReviewingId(null);
+    }
+  };
+
+  const exportRegistrationsCsv = async () => {
+    setExportingCsv(true);
+    setExportError("");
+    try {
+      const blob = await api.getBlob(`/api/tournaments/${id}/registrations/export/`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${tournament.title}-registrations.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportError(e.message || "Could not export registrations.");
+    } finally {
+      setExportingCsv(false);
+    }
+  };
+
+  const registrationSearchResults = useMemo(() => {
+    if (!registrations) return registrations;
+    let list = registrations;
+    if (regStatusFilter) list = list.filter((r) => r.status === regStatusFilter);
+    if (regSearch.trim()) {
+      const q = regSearch.trim().toLowerCase();
+      list = list.filter((r) => [r.full_name, r.gaming_username, r.contact_email, r.player_email, r.team_name]
+        .filter(Boolean).some((v) => v.toLowerCase().includes(q)));
+    }
+    return list;
+  }, [registrations, regSearch, regStatusFilter]);
 
   if (loading) {
     return (
@@ -964,6 +1700,8 @@ export default function TournamentDetail() {
           </div>
         )}
 
+        {!tournament.can_manage && myRegistration && <DisputeFileForm tournamentId={id} />}
+
         {tournament.can_manage && (
           <div className="mt-4 pt-4 border-t border-border/60">
             {!confirmingDelete ? (
@@ -1009,7 +1747,7 @@ export default function TournamentDetail() {
           <DetailItem label="Mode" value={MODE_LABELS[tournament.mode] || tournament.mode} />
           <DetailItem label="Bracket Format" value={BRACKET_FORMAT_LABELS[tournament.bracket_format] || tournament.bracket_format} />
           <DetailItem label="Team Size" value={tournament.team_size > 1 ? `${tournament.team_size} players/team` : "Solo"} />
-          <DetailItem label="Max Players" value={tournament.max_participants} />
+          <DetailItem label="Max Participants" value={tournament.max_participants} />
           <DetailItem icon={Clock} label="Registration Deadline" value={tournament.registration_deadline && formatDateTime(tournament.registration_deadline)} />
           <DetailItem icon={Calendar} label="Starts" value={formatDateTime(tournament.start_date)} />
           <DetailItem icon={Calendar} label="Ends" value={tournament.end_date && formatDateTime(tournament.end_date)} />
@@ -1084,15 +1822,77 @@ export default function TournamentDetail() {
         )}
       </div>
 
+      <div className="mt-8">
+        <div className="flex items-center gap-2 mb-4">
+          <BookOpen className="w-5 h-5 text-primary" />
+          <h2 className="font-display font-bold text-xl">Rules</h2>
+        </div>
+        <TournamentRulesSection tournamentId={id} canManage={tournament.can_manage} />
+      </div>
+
+      {myRegistration && myRegistration.rules_outdated && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl border border-accent/30 bg-accent/5">
+          <p className="text-sm">The rules for this tournament have been updated since you registered. Please review them above.</p>
+          <button
+            onClick={async () => {
+              const updated = await api.post(`/api/registrations/${myRegistration.id}/acknowledge-rules/`);
+              setMyRegistration(updated);
+            }}
+            className="px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-primary text-primary-foreground shrink-0"
+          >
+            I've read the updated rules
+          </button>
+        </div>
+      )}
+
       <AnnouncementsSection tournamentId={id} canManage={tournament.can_manage} />
 
       {/* Registrations (organizer/staff only — hidden entirely if the API denies access) */}
       {registrations && (
         <div className="mt-8">
-          <div className="flex items-center gap-2 mb-4">
-            <UserCheck className="w-5 h-5 text-primary" />
-            <h2 className="font-display font-bold text-xl">Registrations ({registrations.length})</h2>
+          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <UserCheck className="w-5 h-5 text-primary" />
+              <h2 className="font-display font-bold text-xl">Registrations ({registrations.length})</h2>
+            </div>
+            <button
+              type="button"
+              onClick={exportRegistrationsCsv}
+              disabled={exportingCsv}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-heading font-semibold bg-muted hover:bg-muted/70 disabled:opacity-50"
+            >
+              {exportingCsv ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              Export CSV
+            </button>
           </div>
+          {exportError && (
+            <div className="mb-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
+              {exportError}
+            </div>
+          )}
+
+          {registrations.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <input
+                value={regSearch}
+                onChange={(e) => setRegSearch(e.target.value)}
+                placeholder="Search name, username, email…"
+                className="px-3 py-1.5 rounded-lg bg-muted/40 border border-border text-sm outline-none focus:border-primary w-56"
+              />
+              <select
+                value={regStatusFilter}
+                onChange={(e) => setRegStatusFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-lg bg-muted/40 border border-border text-sm outline-none focus:border-primary"
+              >
+                <option value="">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="disqualified">Disqualified</option>
+              </select>
+            </div>
+          )}
 
           {checkInError && (
             <div className="mb-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
@@ -1104,10 +1904,19 @@ export default function TournamentDetail() {
               {reviewError}
             </div>
           )}
+          {cancelNotice && (
+            <div className="mb-3 text-sm text-accent bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
+              {cancelNotice}
+            </div>
+          )}
 
           {registrations.length === 0 ? (
             <div className="glass rounded-xl border border-border/60 p-6 text-center text-sm text-muted-foreground">
               No one has registered yet.
+            </div>
+          ) : registrationSearchResults.length === 0 ? (
+            <div className="glass rounded-xl border border-border/60 p-6 text-center text-sm text-muted-foreground">
+              No registrations match your search.
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-border/60 glass">
@@ -1117,72 +1926,50 @@ export default function TournamentDetail() {
                     <th className="py-2 pl-4 pr-2">{tournament.team_size > 1 ? "Team" : "Player"}</th>
                     {tournament.team_size > 1 && <th className="py-2 pr-2">Captain</th>}
                     <th className="py-2 pr-2">Registered</th>
-                    {tournament.registration_fee > 0 && <th className="py-2 pr-2">Payment</th>}
-                    <th className="py-2 pr-4">Check-in</th>
+                    <th className="py-2 pr-2">Status</th>
+                    <th className="py-2 pr-2">Check-in</th>
+                    <th className="py-2 pr-4">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {registrations.map((r) => (
-                    <tr key={r.id} className="border-t border-border/30">
-                      <td
-                        onClick={() => setDetailReg(r)}
-                        className="py-2.5 pl-4 pr-2 font-medium cursor-pointer hover:text-primary transition-colors"
-                        title="View full registration details"
-                      >
-                        {tournament.team_size > 1 ? (r.team_name || "—") : r.player_email}
-                      </td>
-                      {tournament.team_size > 1 && <td className="py-2.5 pr-2 text-muted-foreground">{r.player_email}</td>}
-                      <td className="py-2.5 pr-2 text-muted-foreground">{new Date(r.registered_at).toLocaleString()}</td>
-                      {tournament.registration_fee > 0 && (
-                        <td className="py-2.5 pr-2">
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                            r.status === "approved" ? "bg-primary/10 text-primary"
-                            : r.status === "rejected" ? "bg-destructive/10 text-destructive"
-                            : "bg-muted text-muted-foreground"
-                          }`}>
-                            {r.status}
-                          </span>
-                        </td>
-                      )}
-                      <td className="py-2.5 pr-4">
-                        {r.checked_in ? (
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                              <CheckCircle2 className="w-3 h-3" /> Checked in
-                            </span>
-                            <button
-                              onClick={() => checkIn(r.id, false)}
-                              disabled={checkingInId === r.id}
-                              className="text-[11px] text-muted-foreground hover:text-destructive underline decoration-dotted disabled:opacity-50"
-                            >
-                              {checkingInId === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : "Undo"}
-                            </button>
-                          </div>
-                        ) : r.status === "rejected" ? (
-                          <span className="text-[11px] text-muted-foreground">Rejected</span>
-                        ) : tournament.registration_fee > 0 && r.status !== "approved" ? (
-                          <span
-                            className="text-[11px] text-muted-foreground"
-                            title="Payment must be approved before this player can be checked in."
-                          >
-                            Awaiting payment approval
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => checkIn(r.id, true)}
-                            disabled={checkingInId === r.id}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-heading font-semibold bg-primary text-primary-foreground disabled:opacity-50"
-                          >
-                            {checkingInId === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Check in"}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
+                  {registrationSearchResults.map((r) => (
+                    <RegistrationRow
+                      key={r.id}
+                      registration={r}
+                      tournament={tournament}
+                      onOpenDetail={() => setDetailReg(r)}
+                      onCheckIn={checkIn}
+                      checkingIn={checkingInId === r.id}
+                      onCancel={organizerCancelRegistration}
+                      cancelling={reviewingId === r.id}
+                    />
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Disputes (organizer/staff only) */}
+      {tournament.can_manage && (
+        <div className="mt-8">
+          <div className="flex items-center gap-2 mb-4">
+            <Flag className="w-5 h-5 text-primary" />
+            <h2 className="font-display font-bold text-xl">Disputes</h2>
+          </div>
+          <TournamentDisputesPanel tournamentId={id} />
+        </div>
+      )}
+
+      {/* Team rosters (organizer/staff only, team-based tournaments only) */}
+      {tournament.can_manage && tournament.team_size > 1 && (
+        <div className="mt-8">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="w-5 h-5 text-primary" />
+            <h2 className="font-display font-bold text-xl">Team Rosters</h2>
+          </div>
+          <TeamRosterPanel tournamentId={id} isStaff={!!user?.is_staff} />
         </div>
       )}
 

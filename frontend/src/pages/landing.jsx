@@ -4,6 +4,7 @@ import { motion, useScroll, useTransform } from "framer-motion";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
 import { Trophy, Users, Gamepad2, Calendar, Play, ChevronRight, Flame, Zap, Crown, Star } from "lucide-react";
+import Logo from "@/components/Logo";
 import HeroBackground from "@/components/landing/herobackground";
 import ScrollProgress from "@/components/landing/ScrollProgress";
 import StatsBand from "@/components/landing/StatsBand";
@@ -329,7 +330,10 @@ export default function Landing() {
 
       <footer className="border-t border-border/40 py-8">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
-          <div className="font-display font-bold tracking-wider">ESPORTS <span className="gradient-text">PAKISTAN</span></div>
+          <div className="flex items-center gap-2 font-display font-bold tracking-wider">
+            <Logo className="h-6 w-auto" />
+            ESPORTS <span className="gradient-text">PAKISTAN</span>
+          </div>
           <Link to="/about" className="hover:text-primary transition-colors">About</Link>
           <div>© 2026 Esports Pakistan. All rights reserved.</div>
         </div>

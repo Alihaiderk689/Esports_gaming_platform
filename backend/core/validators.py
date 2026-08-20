@@ -1,6 +1,8 @@
 import re
 
+import fitz  # PyMuPDF
 from django.core.exceptions import ValidationError
+from PIL import Image, UnidentifiedImageError
 
 NAME_PATTERN = re.compile(r"^[A-Za-z]+(?:[ '-][A-Za-z]+)*$")
 
@@ -68,6 +70,50 @@ _DOCUMENT_MAGIC_BYTES = (
     b'%PDF-',                     # PDF
 )
 
+_PDF_MAX_PAGES = 30  # CNIC scans, compliance certs, payment proofs, dispute evidence — never legitimately long
+
+
+def _validate_image_content(file):
+    """Beyond the magic-byte sniff: actually decode the image. Catches a file
+    that merely starts with a JPEG/PNG signature but isn't a real image (magic
+    bytes alone are as spoofable as a filename), and — because Image.open()
+    runs Pillow's own decompression-bomb check against the declared
+    width/height before any pixel data is decoded — rejects an image whose
+    header claims an absurd pixel count without needing a bespoke check here."""
+    file.seek(0)
+    try:
+        with Image.open(file) as img:
+            img.verify()
+    except Image.DecompressionBombError:
+        raise ValidationError('Image dimensions are too large.')
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise ValidationError('This file is not a valid image.')
+    finally:
+        file.seek(0)
+
+
+def _validate_pdf_content(file):
+    """Beyond the magic-byte sniff: open the PDF with the same library
+    (PyMuPDF) the RAG pipeline uses to parse rulebooks, so a malformed/
+    malicious object structure that would fail or misbehave there is caught
+    at upload time instead. Also bounds page count (these documents are never
+    legitimately long) and rejects embedded files, which have no legitimate
+    use in a CNIC scan/compliance cert/payment proof and are a way to smuggle
+    an unrelated payload inside an otherwise-valid PDF."""
+    file.seek(0)
+    data = file.read()
+    file.seek(0)
+    try:
+        with fitz.open(stream=data, filetype='pdf') as doc:
+            if doc.page_count > _PDF_MAX_PAGES:
+                raise ValidationError(f'PDF must be at most {_PDF_MAX_PAGES} pages.')
+            if doc.embfile_count() > 0:
+                raise ValidationError('PDF must not contain embedded files.')
+    except ValidationError:
+        raise
+    except Exception:
+        raise ValidationError('This file is not a valid PDF.')
+
 
 def validate_document_file(file):
     """Restrict an uploaded document (CNIC scan, compliance certificate, payment
@@ -82,7 +128,11 @@ def validate_document_file(file):
     header = file.read(8)
     file.seek(0)
 
-    if not any(header.startswith(magic) for magic in _DOCUMENT_MAGIC_BYTES):
+    if header.startswith(b'%PDF-'):
+        _validate_pdf_content(file)
+    elif any(header.startswith(magic) for magic in _DOCUMENT_MAGIC_BYTES):
+        _validate_image_content(file)
+    else:
         raise ValidationError('Only JPEG, PNG, or PDF files are allowed.')
 
 

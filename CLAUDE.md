@@ -10,6 +10,14 @@ Backend: Django 4.2 + DRF, PostgreSQL, JWT auth (`djangorestframework-simplejwt`
 Frontend: React + Vite, React Router, Tailwind CSS, shadcn/ui ("new-york" style), Framer Motion.
 RAG assistant: PyMuPDF (PDF extraction), `sentence-transformers` (embeddings), ChromaDB Cloud (vector store), Groq (LLM inference).
 
+## Further documentation
+
+This file covers day-to-day rules and gotchas. For the details behind them:
+
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — why the system is shaped the way it is: the service-layer pattern (and which apps do/don't have one), authentication/authorization architecture, database design, external API integrations, deployment pipeline, and — importantly — the bracket engine's lock-ordering rules. Read this before touching `brackets/services.py`'s locking, or before deciding whether a new app needs its own `services.py`.
+- **[`docs/SECURITY.md`](docs/SECURITY.md)** — how auth, authorization, data isolation, CSRF/CORS, rate limiting, secrets, and file uploads actually work today. Read this before modifying anything under `core/views.py`'s auth endpoints, any `permissions.py`, or `core/storage.py`.
+- **[`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md)** — run through this before every production deploy, not just the first one.
+
 ## Commands
 
 ### Backend (`backend/`)

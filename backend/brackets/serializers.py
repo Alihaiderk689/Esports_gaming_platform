@@ -1,7 +1,8 @@
 from rest_framework import serializers
 
 from brackets.models import Bracket, Match
-from brackets.services import standings as compute_standings
+from brackets.services import format_standings as compute_standings
+from brackets.services import group_stage_standings
 from tourny_regist.models import Team
 
 
@@ -23,6 +24,7 @@ class MatchSerializer(serializers.ModelSerializer):
     player1_email = serializers.SerializerMethodField()
     player2_email = serializers.SerializerMethodField()
     winner_email = serializers.SerializerMethodField()
+    forfeited_by_email = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
@@ -30,7 +32,13 @@ class MatchSerializer(serializers.ModelSerializer):
             'id', 'tournament', 'bracket_side', 'group_label', 'round_number', 'position',
             'player1', 'player1_email', 'player2', 'player2_email',
             'winner', 'winner_email', 'score', 'status', 'next_match',
+            'scheduled_at', 'is_forfeit', 'forfeited_by_email',
         ]
+        # organizer_notes is deliberately never in this serializer — it's staff/organizer
+        # only, and this serializer is also used unqualified (no context, no request)
+        # inside BracketSerializer's per-round nesting, so there's nowhere here to
+        # branch on who's asking. It has its own dedicated, permission-gated endpoint
+        # (MatchNotesView) instead.
         read_only_fields = fields
 
     def get_player1_email(self, obj):
@@ -41,6 +49,9 @@ class MatchSerializer(serializers.ModelSerializer):
 
     def get_winner_email(self, obj):
         return display_name(obj.winner, obj.tournament) if obj.winner_id else None
+
+    def get_forfeited_by_email(self, obj):
+        return display_name(obj.forfeited_by, obj.tournament) if obj.forfeited_by_id else None
 
 
 class BracketSerializer(serializers.ModelSerializer):
@@ -66,6 +77,9 @@ class BracketSerializer(serializers.ModelSerializer):
                 'name': display_name(row['player'], tournament),
                 'wins': row['wins'],
                 'played': row['played'],
+                'losses': row['losses'],
+                'byes': row['byes'],
+                'tiebreaks': row.get('tiebreaks', {}),
             }
             for row in rows
         ]
@@ -116,7 +130,9 @@ class BracketSerializer(serializers.ModelSerializer):
                         ids_in_group.add(m.player1_id)
                         ids_in_group.add(m.player2_id)
                 group_players = [p for p in all_players if p.pk in ids_in_group]
-                result[label] = self._standings_payload(compute_standings(tournament, group_players), tournament)
+                result[label] = self._standings_payload(
+                    group_stage_standings(tournament, group_players), tournament,
+                )
             return result
 
         return None
@@ -132,3 +148,36 @@ class MatchResultSerializer(serializers.Serializer):
         if value not in valid_ids:
             raise serializers.ValidationError('Winner must be one of the two players in this match.')
         return value
+
+
+class MatchOverrideSerializer(serializers.Serializer):
+    winner = serializers.IntegerField()
+    score = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    reason = serializers.CharField()
+
+    def validate_winner(self, value):
+        match = self.context['match']
+        valid_ids = {pid for pid in (match.player1_id, match.player2_id) if pid}
+        if value not in valid_ids:
+            raise serializers.ValidationError('Winner must be one of the two players in this match.')
+        return value
+
+
+class MatchForfeitSerializer(serializers.Serializer):
+    forfeiting_player = serializers.IntegerField()
+    reason = serializers.CharField()
+
+    def validate_forfeiting_player(self, value):
+        match = self.context['match']
+        valid_ids = {pid for pid in (match.player1_id, match.player2_id) if pid}
+        if value not in valid_ids:
+            raise serializers.ValidationError('The forfeiting player must be one of the two players in this match.')
+        return value
+
+
+class MatchScheduleSerializer(serializers.Serializer):
+    scheduled_at = serializers.DateTimeField(allow_null=True)
+
+
+class MatchNotesSerializer(serializers.Serializer):
+    organizer_notes = serializers.CharField(allow_blank=True)

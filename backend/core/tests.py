@@ -1,27 +1,48 @@
+from io import BytesIO
 from unittest.mock import patch
 
 import cloudinary.exceptions
+import fitz
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from core.models import Follow, PendingRegistration
+from core.models import AuditLog, Dispute, Follow, PendingRegistration
 from core.tokens import pending_registration_token
 from organizer.models import Organizer
 
 User = get_user_model()
 
-# Real magic bytes so validate_document_file (core/validators.py) accepts them —
-# padded past the 8-byte header it sniffs, content beyond that is irrelevant.
-_JPEG_BYTES = b'\xff\xd8\xff\xe0' + b'\x00' * 16
-_PDF_BYTES = b'%PDF-1.4\n' + b'fake pdf body'.ljust(16, b'\x00')
+
+def _make_jpeg_bytes():
+    buf = BytesIO()
+    Image.new('RGB', (10, 10), color='blue').save(buf, format='JPEG')
+    return buf.getvalue()
+
+
+def _make_pdf_bytes():
+    doc = fitz.open()
+    doc.new_page()
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+# Genuinely decodable, not just correct magic bytes — validate_document_file
+# (core/validators.py) actually opens these with Pillow/PyMuPDF, not just
+# sniffs the header.
+_JPEG_BYTES = _make_jpeg_bytes()
+_PDF_BYTES = _make_pdf_bytes()
 
 
 class PlayerApiTests(APITestCase):
@@ -106,6 +127,49 @@ class PlayerApiTests(APITestCase):
         resp = self.client.delete('/api/players/me/')
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_organizer_with_tournament_cannot_self_delete(self):
+        # Regression test for a real data-integrity bug: Organizer.user used
+        # to be CASCADE, so this endpoint let an approved organizer delete
+        # their own account and silently take every tournament they'd ever
+        # run — and everything downstream of those (registrations, brackets,
+        # matches, disputes) for every *other* player who participated —
+        # down with it. Should be a clean 400, not a 500, and definitely not
+        # a successful 204.
+        from games.models import Game
+        from organizer.models import Organizer
+        from tourny_regist.models import Tournament
+
+        organizer_user = User.objects.create_user(email='org-selfdelete@example.com', password='StrongPass123!')
+        organizer = Organizer.objects.create(
+            user=organizer_user, company_name='Acme', status=Organizer.Status.APPROVED,
+        )
+        game = Game.objects.create(name='Valorant', genre='FPS')
+        tournament = Tournament.objects.create(name='Cup', game=game, organizer=organizer)
+
+        self.client.force_authenticate(user=organizer_user)
+        resp = self.client.delete('/api/players/me/')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(User.objects.filter(pk=organizer_user.pk).exists())
+        self.assertTrue(Organizer.objects.filter(pk=organizer.pk).exists())
+        self.assertTrue(Tournament.objects.filter(pk=tournament.pk).exists())
+
+    def test_admin_cannot_delete_organizer_with_tournament_via_id(self):
+        from games.models import Game
+        from organizer.models import Organizer
+        from tourny_regist.models import Tournament
+
+        organizer_user = User.objects.create_user(email='org-admindelete@example.com', password='StrongPass123!')
+        organizer = Organizer.objects.create(
+            user=organizer_user, company_name='Acme', status=Organizer.Status.APPROVED,
+        )
+        game = Game.objects.create(name='Valorant', genre='FPS')
+        Tournament.objects.create(name='Cup', game=game, organizer=organizer)
+
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.delete(f'/api/players/{organizer_user.pk}/')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(User.objects.filter(pk=organizer_user.pk).exists())
 
     def test_follow_and_top_and_following(self):
         resp = self.client.post(f'/api/players/{self.other.pk}/follow/')
@@ -362,6 +426,7 @@ class ResendVerificationApiTests(APITestCase):
 
 class LoginApiTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = User.objects.create_user(email='caseuser@example.com', password='StrongPass123!')
 
     def test_login_email_case_insensitive(self):
@@ -369,27 +434,58 @@ class LoginApiTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
         self.assertEqual(resp.data['user']['email'], 'caseuser@example.com')
 
+    def test_login_throttled_per_account_even_across_different_ips(self):
+        # The IP-scoped 'login' throttle alone wouldn't catch this: every
+        # attempt below comes from a distinct address, so it never
+        # accumulates past 1 there. LoginEmailRateThrottle (core/throttling.py)
+        # is what actually stops a credential-stuffing run distributed across
+        # many IPs against one account.
+        for i in range(10):
+            resp = self.client.post(
+                '/api/auth/login/',
+                {'email': self.user.email, 'password': 'WrongPass!123'},
+                REMOTE_ADDR=f'10.0.0.{i}',
+            )
+            self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        resp = self.client.post(
+            '/api/auth/login/',
+            {'email': self.user.email, 'password': 'WrongPass!123'},
+            REMOTE_ADDR='10.0.0.99',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
 
 class GoogleLoginApiTests(APITestCase):
-    def _payload(self, **overrides):
+    def setUp(self):
+        cache.clear()
+
+    def _payload(self, nonce, **overrides):
         payload = {
             'email': 'googleuser@example.com', 'email_verified': True,
             'sub': 'google-sub-123', 'given_name': 'Goo', 'family_name': 'Gler',
+            'nonce': nonce,
         }
         payload.update(overrides)
         return payload
 
+    def _start(self):
+        resp = self.client.get('/api/auth/google/start/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        return resp.data['nonce'], resp.data['state']
+
     @patch('core.views.google_id_token.verify_oauth2_token')
     def test_google_login_unverified_email_rejected(self, mock_verify):
-        mock_verify.return_value = self._payload(email_verified=False)
-        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token'})
+        nonce, state = self._start()
+        mock_verify.return_value = self._payload(nonce, email_verified=False)
+        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token', 'state': state})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(User.objects.filter(email='googleuser@example.com').exists())
 
     @patch('core.views.google_id_token.verify_oauth2_token')
     def test_google_login_verified_email_accepted(self, mock_verify):
-        mock_verify.return_value = self._payload()
-        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token'})
+        nonce, state = self._start()
+        mock_verify.return_value = self._payload(nonce)
+        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token', 'state': state})
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
         self.assertTrue(User.objects.filter(email='googleuser@example.com').exists())
 
@@ -397,10 +493,44 @@ class GoogleLoginApiTests(APITestCase):
     def test_google_login_network_failure_returns_503_not_400(self, mock_verify):
         from google.auth.exceptions import TransportError
 
+        nonce, state = self._start()
         mock_verify.side_effect = TransportError('could not reach Google')
-        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token'})
+        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token', 'state': state})
         self.assertEqual(resp.status_code, status.HTTP_503_SERVICE_UNAVAILABLE, resp.data)
+
+    def test_google_login_requires_state(self):
+        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token'})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_google_login_rejects_garbage_state(self):
+        resp = self.client.post(
+            '/api/auth/google-login/', {'id_token': 'fake-token', 'state': 'not-a-real-signed-value'},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('state', resp.data)
+
+    @patch('core.views.google_id_token.verify_oauth2_token')
+    def test_google_login_rejects_id_token_whose_nonce_claim_doesnt_match_state(self, mock_verify):
+        # A token minted for a *different* login attempt (different nonce) —
+        # this is exactly what GoogleOAuthStartView/GoogleLoginView's
+        # server-side re-derivation is meant to catch, as opposed to the
+        # previous client-side-only nonce check.
+        _, state = self._start()
+        mock_verify.return_value = self._payload('some-other-attempts-nonce')
+        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token', 'state': state})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(User.objects.filter(email='googleuser@example.com').exists())
+
+    @patch('core.views.google_id_token.verify_oauth2_token')
+    def test_google_login_state_cannot_be_replayed_after_a_successful_login(self, mock_verify):
+        nonce, state = self._start()
+        mock_verify.return_value = self._payload(nonce)
+
+        first = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token', 'state': state})
+        self.assertEqual(first.status_code, status.HTTP_200_OK, first.data)
+
+        second = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token', 'state': state})
+        self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 class SessionRevocationApiTests(APITestCase):
@@ -445,3 +575,481 @@ class SessionRevocationApiTests(APITestCase):
         self.assertTrue(outstanding.exists())
         for t in outstanding:
             self.assertTrue(BlacklistedToken.objects.filter(token=t).exists())
+
+    def test_logout_all_revokes_outstanding_tokens(self):
+        self.assertFalse(BlacklistedToken.objects.filter(token__in=self._outstanding()).exists())
+        resp = self.client.post('/api/auth/logout-all/')
+        self.assertEqual(resp.status_code, status.HTTP_205_RESET_CONTENT)
+        outstanding = self._outstanding()
+        self.assertTrue(outstanding.exists())
+        for token in outstanding:
+            self.assertTrue(BlacklistedToken.objects.filter(token=token).exists())
+
+    def test_logout_all_requires_auth(self):
+        self.client.force_authenticate(user=None)
+        resp = self.client.post('/api/auth/logout-all/')
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class DisputeTestMixin:
+    """Shared fixtures: an approved tournament with two checked-in players, plus
+    staff and an outsider account to exercise every permission tier a dispute
+    endpoint has to enforce."""
+
+    def setUp(self):
+        from games.models import Game
+        from tourny_regist.models import Registration, Tournament
+
+        self.game = Game.objects.create(name='DisputeTestGame', genre='FPS')
+        self.organizer_user = User.objects.create_user(email='dispute-organizer@example.com', password='StrongPass123')
+        self.organizer = Organizer.objects.create(
+            user=self.organizer_user, company_name='Dispute Co', status=Organizer.Status.APPROVED,
+        )
+        self.player1 = User.objects.create_user(email='dispute-player1@example.com', password='StrongPass123')
+        self.player2 = User.objects.create_user(email='dispute-player2@example.com', password='StrongPass123')
+        self.outsider = User.objects.create_user(email='dispute-outsider@example.com', password='StrongPass123')
+        self.admin = User.objects.create_user(email='dispute-admin@example.com', password='StrongPass123', is_staff=True)
+        self.tournament = Tournament.objects.create(
+            name='Dispute Tournament', game=self.game, organizer=self.organizer,
+            status=Tournament.Status.APPROVED, created_by=self.organizer_user,
+        )
+        Registration.objects.create(tournament=self.tournament, player=self.player1, checked_in=True)
+        Registration.objects.create(tournament=self.tournament, player=self.player2, checked_in=True)
+
+    def _dispute(self):
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/disputes/', {'description': 'issue'})
+        return Dispute.objects.get(pk=resp.data['id'])
+
+
+class TournamentDisputeTests(DisputeTestMixin, APITestCase):
+    def test_registered_player_can_file_a_dispute(self):
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.post(
+            f'/api/tournaments/{self.tournament.pk}/disputes/', {'description': 'Wrong bracket seeding'},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        dispute = Dispute.objects.get()
+        self.assertEqual(dispute.filed_by_id, self.player1.pk)
+        self.assertEqual(dispute.status, Dispute.Status.OPEN)
+
+    def test_outsider_cannot_file_a_dispute(self):
+        self.client.force_authenticate(user=self.outsider)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/disputes/', {'description': 'x'})
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_empty_description_rejected(self):
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/disputes/', {'description': '   '})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_organizer_can_list_disputes_outsider_cannot(self):
+        self._dispute()
+
+        self.client.force_authenticate(user=self.organizer_user)
+        resp = self.client.get(f'/api/tournaments/{self.tournament.pk}/disputes/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+
+        self.client.force_authenticate(user=self.outsider)
+        resp = self.client.get(f'/api/tournaments/{self.tournament.pk}/disputes/')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class MatchDisputeTests(DisputeTestMixin, APITestCase):
+    def _match(self):
+        from brackets.models import Match
+        from brackets.services import generate_bracket
+        bracket = generate_bracket(self.tournament)
+        return Match.objects.get(bracket=bracket)
+
+    def test_match_participant_can_file_a_dispute(self):
+        match = self._match()
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.post(f'/api/matches/{match.pk}/disputes/', {'description': 'lag caused a false loss'})
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        dispute = Dispute.objects.get()
+        self.assertEqual(dispute.object_id, match.pk)
+
+    def test_non_participant_cannot_file_a_match_dispute(self):
+        match = self._match()
+        self.client.force_authenticate(user=self.outsider)
+        resp = self.client.post(f'/api/matches/{match.pk}/disputes/', {'description': 'x'})
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_match_dispute_detail_shows_tournament_context(self):
+        match = self._match()
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.post(f'/api/matches/{match.pk}/disputes/', {'description': 'x'})
+        dispute_id = resp.data['id']
+
+        self.client.force_authenticate(user=self.organizer_user)
+        resp = self.client.get(f'/api/disputes/{dispute_id}/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn(self.tournament.name, resp.data['target_label'])
+        self.assertEqual(resp.data['target_tournament_id'], self.tournament.pk)
+
+
+class DisputeEvidenceTests(DisputeTestMixin, APITestCase):
+    def test_stakeholder_can_upload_evidence(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        evidence_file = SimpleUploadedFile('proof.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        resp = self.client.post(f'/api/disputes/{dispute.pk}/evidence/', {'file': evidence_file}, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        self.assertEqual(dispute.evidence.count(), 1)
+
+    def test_evidence_rejects_non_image_content(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        malicious = SimpleUploadedFile('proof.jpg', b'<script>alert(1)</script>', content_type='image/jpeg')
+        resp = self.client.post(f'/api/disputes/{dispute.pk}/evidence/', {'file': malicious}, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_non_stakeholder_cannot_upload_evidence(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.outsider)
+        evidence_file = SimpleUploadedFile('proof.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        resp = self.client.post(f'/api/disputes/{dispute.pk}/evidence/', {'file': evidence_file}, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_cannot_upload_evidence_to_a_resolved_dispute(self):
+        # Business-logic regression test: evidence upload previously had no
+        # status check at all (unlike DisputeStatusView, which correctly
+        # blocks further status changes once resolved/dismissed) — a
+        # stakeholder could keep attaching "evidence" to a dispute's record
+        # indefinitely after its decision was already made.
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.organizer_user)
+        self.client.patch(f'/api/disputes/{dispute.pk}/status/', {
+            'status': 'resolved', 'resolution_notes': 'decided',
+        }, format='json')
+
+        self.client.force_authenticate(user=self.player1)
+        evidence_file = SimpleUploadedFile('proof.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        resp = self.client.post(f'/api/disputes/{dispute.pk}/evidence/', {'file': evidence_file}, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(dispute.evidence.count(), 0)
+
+
+class DisputeStatusTests(DisputeTestMixin, APITestCase):
+    def test_organizer_can_resolve(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.organizer_user)
+        resp = self.client.patch(f'/api/disputes/{dispute.pk}/status/', {
+            'status': 'resolved', 'resolution_notes': 'Verified seeding was correct.',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        dispute.refresh_from_db()
+        self.assertEqual(dispute.status, Dispute.Status.RESOLVED)
+        self.assertEqual(dispute.resolved_by_id, self.organizer_user.pk)
+        self.assertIsNotNone(dispute.resolved_at)
+
+    def test_resolution_notes_required_to_resolve(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.organizer_user)
+        resp = self.client.patch(f'/api/disputes/{dispute.pk}/status/', {'status': 'resolved'}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_player_cannot_resolve_their_own_dispute(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.patch(f'/api/disputes/{dispute.pk}/status/', {
+            'status': 'dismissed', 'resolution_notes': 'nvm',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cannot_resolve_an_already_resolved_dispute(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.organizer_user)
+        self.client.patch(f'/api/disputes/{dispute.pk}/status/', {
+            'status': 'resolved', 'resolution_notes': 'done',
+        }, format='json')
+        resp = self.client.patch(f'/api/disputes/{dispute.pk}/status/', {
+            'status': 'dismissed', 'resolution_notes': 'again',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class DisputeEscalationTests(DisputeTestMixin, APITestCase):
+    def test_filer_can_escalate(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.post(f'/api/disputes/{dispute.pk}/escalate/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        dispute.refresh_from_db()
+        self.assertTrue(dispute.escalated_to_admin)
+
+    def test_organizer_cannot_resolve_once_escalated(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        self.client.post(f'/api/disputes/{dispute.pk}/escalate/')
+
+        self.client.force_authenticate(user=self.organizer_user)
+        resp = self.client.patch(f'/api/disputes/{dispute.pk}/status/', {
+            'status': 'resolved', 'resolution_notes': 'x',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_can_resolve_an_escalated_dispute(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        self.client.post(f'/api/disputes/{dispute.pk}/escalate/')
+
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.patch(f'/api/disputes/{dispute.pk}/status/', {
+            'status': 'resolved', 'resolution_notes': 'reviewed by admin',
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+
+    def test_outsider_cannot_escalate(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.outsider)
+        resp = self.client.post(f'/api/disputes/{dispute.pk}/escalate/')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_double_escalation_rejected(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        self.client.post(f'/api/disputes/{dispute.pk}/escalate/')
+        resp = self.client.post(f'/api/disputes/{dispute.pk}/escalate/')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_cannot_escalate_a_resolved_dispute(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.organizer_user)
+        self.client.patch(f'/api/disputes/{dispute.pk}/status/', {
+            'status': 'resolved', 'resolution_notes': 'decided',
+        }, format='json')
+
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.post(f'/api/disputes/{dispute.pk}/escalate/')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        dispute.refresh_from_db()
+        self.assertFalse(dispute.escalated_to_admin)
+
+
+class DisputeMineAndAdminListTests(DisputeTestMixin, APITestCase):
+    def test_mine_lists_only_own_disputes(self):
+        self._dispute()
+        self.client.force_authenticate(user=self.player2)
+        self.client.post(f'/api/tournaments/{self.tournament.pk}/disputes/', {'description': 'b'})
+
+        self.client.force_authenticate(user=self.player1)
+        resp = self.client.get('/api/disputes/mine/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]['description'], 'issue')
+
+    def test_admin_list_sees_every_dispute(self):
+        self._dispute()
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/admin/disputes/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+
+    def test_admin_list_filters_by_escalated(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        self.client.post(f'/api/disputes/{dispute.pk}/escalate/')
+
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/admin/disputes/', {'escalated': 'true'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data), 1)
+
+    def test_non_staff_cannot_use_admin_list(self):
+        self.client.force_authenticate(user=self.organizer_user)
+        resp = self.client.get('/api/admin/disputes/')
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class AuditLogImmutabilityTests(APITestCase):
+    """Model-level backstop (core/models.py:AuditLog.save/delete) — there's no
+    API path to edit/delete an entry today, but this guarantees that stays
+    true even if one gets added by mistake later."""
+
+    def setUp(self):
+        self.actor = User.objects.create_user(email='auditor@example.com', password='StrongPass123!')
+        # Built through log_action's own path rather than constructing the
+        # ContentType by hand — reuse the actor row itself as the target.
+        from core.audit import log_action
+        log_action(self.actor, 'test.action', self.actor)
+        self.entry = AuditLog.objects.get(action='test.action')
+
+    def test_cannot_modify_an_existing_entry(self):
+        self.entry.reason = 'tampered'
+        with self.assertRaises(ValueError):
+            self.entry.save()
+
+    def test_cannot_delete_an_entry(self):
+        with self.assertRaises(ValueError):
+            self.entry.delete()
+
+
+class SecurityEventLoggingTests(APITestCase):
+    """core.security_events.log_security_event refuses to log a field whose
+    name suggests it might carry a secret — a structural backstop for the
+    "never log a password/token" rule, not just a comment relying on every
+    future call site remembering it."""
+
+    def test_refuses_a_field_named_like_a_secret(self):
+        from core.security_events import log_security_event
+
+        for bad_field in ('password', 'current_password', 'refresh_token', 'reset_token', 'id_token', 'Authorization'):
+            with self.assertRaises(ValueError):
+                log_security_event('test.event', **{bad_field: 'whatever'})
+
+    def test_allows_ordinary_identifying_fields(self):
+        from core.security_events import log_security_event
+
+        # Doesn't raise — target_user_id/attempted_email/status_code and
+        # similar plain identifiers are exactly what this is for.
+        log_security_event('test.event', target_user_id=1, attempted_email='x@example.com', status_code=403)
+
+
+class AccountDeletionPreservesAccountabilityRecordsTests(DisputeTestMixin, APITestCase):
+    """Dispute.filed_by, DisputeEvidence.uploaded_by, and
+    AdminReviewRequest.requested_by are all SET_NULL rather than CASCADE
+    (core/models.py) — deleting the account that filed/uploaded/requested
+    something shouldn't delete the record itself, since other stakeholders
+    (the opposing player, the organizer, staff, an already-made admin
+    decision) rely on it surviving. Tested at the model/ORM level directly
+    (rather than through /api/players/me/) since that endpoint's own guard
+    against deleting an organizer with tournaments (ProtectedUserDeleteMixin)
+    is a separate concern from what these FKs' on_delete behavior does."""
+
+    def test_dispute_and_its_evidence_survive_the_filer_being_deleted(self):
+        dispute = self._dispute()
+        self.client.force_authenticate(user=self.player1)
+        self.client.post(f'/api/disputes/{dispute.pk}/evidence/', {
+            'file': SimpleUploadedFile('proof.jpg', _JPEG_BYTES, content_type='image/jpeg'),
+        }, format='multipart')
+
+        self.player1.delete()
+
+        dispute.refresh_from_db()
+        self.assertIsNone(dispute.filed_by_id)
+        self.assertEqual(dispute.evidence.count(), 1)
+        self.assertIsNone(dispute.evidence.first().uploaded_by_id)
+
+    def test_admin_review_request_survives_the_requesting_organizer_being_deleted(self):
+        from django.contrib.contenttypes.models import ContentType
+
+        from core.models import AdminReviewRequest
+
+        # organizer_user (DisputeTestMixin) has no tournaments of its own —
+        # only self.tournament, owned by self.organizer — so it's directly
+        # deletable, isolating this test to the SET_NULL behavior itself.
+        requester = User.objects.create_user(email='review-requester@example.com', password='StrongPass123')
+        review = AdminReviewRequest.objects.create(
+            requested_by=requester,
+            request_type=AdminReviewRequest.RequestType.TOURNAMENT_CANCELLATION,
+            reason='has registrations',
+            content_type=ContentType.objects.get_for_model(self.tournament),
+            object_id=self.tournament.pk,
+        )
+
+        requester.delete()
+
+        review.refresh_from_db()
+        self.assertIsNone(review.requested_by_id)
+
+
+class AdminUserDetailViewTests(APITestCase):
+    """Changing another account's is_staff/is_active requires the acting
+    admin to re-enter their own current password — a stolen-but-still-valid
+    access token shouldn't be enough on its own to mint a second admin
+    account or deactivate one. See core.views.AdminUserDetailView.update."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            email='reauth-admin@example.com', password='AdminPass123!', is_staff=True,
+        )
+        self.target = User.objects.create_user(email='reauth-target@example.com', password='StrongPass123')
+        self.client.force_authenticate(user=self.admin)
+
+    def test_grant_staff_without_current_password_rejected(self):
+        resp = self.client.patch(f'/api/admin/users/{self.target.pk}/', {'is_staff': True})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.target.refresh_from_db()
+        self.assertFalse(self.target.is_staff)
+
+    def test_grant_staff_with_wrong_current_password_rejected(self):
+        resp = self.client.patch(
+            f'/api/admin/users/{self.target.pk}/', {'is_staff': True, 'current_password': 'WrongPassword!'},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.target.refresh_from_db()
+        self.assertFalse(self.target.is_staff)
+
+    def test_grant_staff_with_correct_current_password_succeeds_and_is_audited(self):
+        resp = self.client.patch(
+            f'/api/admin/users/{self.target.pk}/', {'is_staff': True, 'current_password': 'AdminPass123!'},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.target.refresh_from_db()
+        self.assertTrue(self.target.is_staff)
+
+        entry = AuditLog.objects.get(action='admin.user_staff_status_changed', object_id=self.target.pk)
+        self.assertEqual(entry.actor_id, self.admin.pk)
+        self.assertFalse(entry.metadata['before']['is_staff'])
+        self.assertTrue(entry.metadata['after']['is_staff'])
+
+
+class SecuritySettingsInvariantTests(TestCase):
+    """Codifies docs/SECURITY_CHECKLIST.md items that are 'already correctly
+    implemented' as permanent regression tests — a settings.py edit that
+    silently drifts one of these back to something unsafe now fails CI on
+    every push instead of only being caught at the next manual checklist
+    review."""
+
+    def test_cors_does_not_allow_all_origins(self):
+        self.assertFalse(getattr(settings, 'CORS_ALLOW_ALL_ORIGINS', False))
+
+    def test_cors_does_not_allow_credentials(self):
+        self.assertFalse(settings.CORS_ALLOW_CREDENTIALS)
+
+    def test_jwt_algorithm_is_pinned_to_hs256(self):
+        self.assertEqual(settings.SIMPLE_JWT['ALGORITHM'], 'HS256')
+
+    def test_expected_throttle_scopes_are_present(self):
+        rates = settings.REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']
+        for scope in (
+            'login', 'login_email', 'register', 'email_action', 'email_action_email',
+            'chat', 'team_join', 'user', 'anon',
+        ):
+            self.assertIn(scope, rates, f'{scope!r} missing from DEFAULT_THROTTLE_RATES')
+
+    def test_security_headers_are_set(self):
+        self.assertTrue(settings.SECURE_CONTENT_TYPE_NOSNIFF)
+        self.assertEqual(settings.X_FRAME_OPTIONS, 'DENY')
+
+    def test_exception_handler_is_wired(self):
+        self.assertEqual(
+            settings.REST_FRAMEWORK['EXCEPTION_HANDLER'], 'core.exceptions.security_aware_exception_handler',
+        )
+
+
+class ProductionMonitoringCheckTests(TestCase):
+    """core.checks.production_monitoring_check — advisory warnings that
+    surface in Render's deploy logs (entrypoint.sh's `migrate` runs system
+    checks by default). See core/apps.py:CoreConfig.ready for registration."""
+
+    def test_no_warnings_outside_production(self):
+        from core.checks import production_monitoring_check
+        with override_settings(ENVIRONMENT='development', REDIS_URL='', SENTRY_DSN=''):
+            self.assertEqual(production_monitoring_check(None), [])
+
+    def test_warns_when_redis_and_sentry_unset_in_production(self):
+        from core.checks import production_monitoring_check
+        with override_settings(ENVIRONMENT='production', REDIS_URL='', SENTRY_DSN=''):
+            warnings = production_monitoring_check(None)
+        self.assertEqual({w.id for w in warnings}, {'core.W001', 'core.W002'})
+
+    def test_no_warnings_when_both_set_in_production(self):
+        from core.checks import production_monitoring_check
+        with override_settings(
+            ENVIRONMENT='production', REDIS_URL='redis://localhost:6379/0', SENTRY_DSN='https://x@sentry.io/1',
+        ):
+            self.assertEqual(production_monitoring_check(None), [])

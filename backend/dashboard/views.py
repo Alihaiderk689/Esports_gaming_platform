@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework import permissions
 from rest_framework.exceptions import NotFound
@@ -86,11 +86,15 @@ class OrganizerDashboardView(APIView):
                 'status': organizer.status,
             },
             'tournaments_count': tournaments.count(),
+            'draft_tournaments_count': tournaments.filter(status=Tournament.Status.DRAFT).count(),
             'pending_tournaments_count': tournaments.filter(status=Tournament.Status.PENDING).count(),
+            'cancelled_tournaments_count': tournaments.filter(status=Tournament.Status.CANCELLED).count(),
             'completed_tournaments_count': tournaments.filter(
                 status=Tournament.Status.APPROVED, ends_at__isnull=False, ends_at__lt=timezone.now(),
             ).count(),
-            'active_tournaments_count': tournaments.filter(is_registration_open=True).count(),
+            'active_tournaments_count': tournaments.filter(
+                is_registration_open=True,
+            ).exclude(status=Tournament.Status.CANCELLED).count(),
             'total_registrations': Registration.objects.filter(tournament_id__in=tournament_ids).count(),
             'matches_awaiting_result': Match.objects.filter(
                 tournament_id__in=tournament_ids, status=Match.Status.READY,
@@ -99,11 +103,14 @@ class OrganizerDashboardView(APIView):
                 {
                     'id': tournament.pk,
                     'name': tournament.name,
+                    'status': tournament.status,
                     'starts_at': tournament.starts_at,
                     'is_registration_open': tournament.is_registration_open,
                     'registrations_count': Registration.objects.filter(tournament=tournament).count(),
                 }
-                for tournament in tournaments.order_by('-starts_at')[:10]
+                # Nulls last: a draft with no starts_at yet shouldn't push
+                # ahead of scheduled tournaments in this "recent" list.
+                for tournament in tournaments.order_by(F('starts_at').desc(nulls_last=True))[:10]
             ],
         })
 

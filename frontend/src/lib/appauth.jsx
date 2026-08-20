@@ -46,8 +46,8 @@ export function AppAuthProvider({ children }) {
     return data;
   };
 
-  const googleLogin = async (idToken) => {
-    const data = await api.post("/api/auth/google-login/", { id_token: idToken });
+  const googleLogin = async (idToken, state) => {
+    const data = await api.post("/api/auth/google-login/", { id_token: idToken, state });
     tokenStorage.set(data.access || data.access_token, data.refresh);
     setUser(data.user);
     return data.user;
@@ -65,6 +65,20 @@ export function AppAuthProvider({ children }) {
     window.location.href = "/login";
   };
 
-  const value = { user, loading, login, register, googleLogin, logout, refreshUser: fetchMe, setUser };
+  // Blacklists every refresh token for this account (core.tokens.revoke_all_sessions),
+  // not just this browser's — for a user who suspects a device they're not
+  // holding right now (a shared computer, a stolen laptop) still has a
+  // valid session. This browser's own tokens are cleared the same as a
+  // normal logout since its refresh token is blacklisted too.
+  const logoutAllSessions = async () => {
+    await api.post("/api/auth/logout-all/");
+    tokenStorage.clear();
+    setUser(null);
+    window.location.href = "/login";
+  };
+
+  const value = {
+    user, loading, login, register, googleLogin, logout, logoutAllSessions, refreshUser: fetchMe, setUser,
+  };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

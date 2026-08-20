@@ -1,14 +1,26 @@
+from django.contrib.contenttypes.models import ContentType
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from brackets.models import Bracket, Match
-from brackets.serializers import BracketSerializer, MatchResultSerializer, MatchSerializer
+from brackets.serializers import (
+    BracketSerializer,
+    MatchForfeitSerializer,
+    MatchNotesSerializer,
+    MatchOverrideSerializer,
+    MatchResultSerializer,
+    MatchScheduleSerializer,
+    MatchSerializer,
+)
 from brackets.services import (
+    NeedsAdminReview,
     complete_match,
     finalize_tournament_champion,
+    forfeit_match,
     generate_bracket,
     generate_double_elimination_bracket,
     generate_group_playoff_bracket,
@@ -17,7 +29,13 @@ from brackets.services import (
     generate_round_robin_bracket,
     generate_swiss_bracket,
     generate_three_game_guarantee_bracket,
+    override_match_result,
+    preview_bracket,
+    reset_bracket,
 )
+from core.audit import log_action
+from core.models import AdminReviewRequest, Dispute
+from core.serializers import DisputeCreateSerializer, DisputeSerializer
 from tourny_regist.models import Tournament
 from tourny_regist.permissions import IsTournamentStaffOrAdmin
 
@@ -66,6 +84,55 @@ class TournamentBracketView(APIView):
         return Response(BracketSerializer(bracket).data, status=status.HTTP_201_CREATED)
 
 
+class TournamentBracketPreviewView(APIView):
+    """Read-only — see brackets.services.preview_bracket. Organizer reviews
+    seeding/matchups/byes before actually generating (spec: "Generate ->
+    Preview -> Organizer confirmation -> Activate")."""
+    permission_classes = [permissions.IsAuthenticated, IsTournamentStaffOrAdmin]
+
+    def get(self, request, pk):
+        tournament = get_object_or_404(Tournament, pk=pk)
+        self.check_object_permissions(request, tournament)
+        # Deliberately NOT named "format" — that query param name is reserved
+        # by DRF's content-negotiation override (URL_FORMAT_OVERRIDE) and gets
+        # intercepted before this view ever runs, raising Http404 for any
+        # value that isn't a registered renderer format ('json', 'api', ...).
+        bracket_format = request.query_params.get('bracket_format', tournament.bracket_format)
+        return Response(preview_bracket(tournament, bracket_format))
+
+
+class TournamentBracketResetView(APIView):
+    """Immediate if safe (see brackets.services.reset_bracket) — otherwise
+    files an AdminReviewRequest and returns 202, same shape as
+    TournamentCancelView/RegistrationCancelView."""
+    permission_classes = [permissions.IsAuthenticated, IsTournamentStaffOrAdmin]
+
+    def post(self, request, pk):
+        tournament = get_object_or_404(Tournament, pk=pk)
+        self.check_object_permissions(request, tournament)
+        reason = request.data.get('reason', '')
+        try:
+            reset_bracket(tournament, request.user, reason)
+        except NeedsAdminReview:
+            try:
+                with transaction.atomic():
+                    AdminReviewRequest.objects.create(
+                        requested_by=request.user,
+                        request_type=AdminReviewRequest.RequestType.BRACKET_RESET,
+                        reason=reason,
+                        content_type=ContentType.objects.get_for_model(Tournament),
+                        object_id=tournament.pk,
+                    )
+                log_action(request.user, 'bracket.reset_review_requested', tournament, reason=reason)
+            except IntegrityError:
+                pass  # a pending request for this already exists — nothing new to create, still a 202
+            return Response(
+                {'detail': 'This bracket already has recorded results, so resetting it needs admin review. Your request has been submitted.'},
+                status=status.HTTP_202_ACCEPTED,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class TournamentMatchesView(generics.ListAPIView):
     serializer_class = MatchSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -94,6 +161,11 @@ class MatchResultView(APIView):
             raise ValidationError({
                 'detail': 'This match is not ready for a result (players not yet determined, or already completed).',
             })
+        if match.player1_id is None or match.player2_id is None:
+            # A one-sided slot is a bye: it is auto-completed at generation time and
+            # has no result to report. Reachable only if a bye were somehow left READY,
+            # but reporting a "result" for an unplayed game must never be accepted.
+            raise ValidationError({'detail': 'A bye advances automatically and has no result to submit.'})
 
         serializer = MatchResultSerializer(data=request.data, context={'match': match})
         serializer.is_valid(raise_exception=True)
@@ -104,6 +176,113 @@ class MatchResultView(APIView):
         finalize_tournament_champion(match.tournament)
 
         return Response(MatchSerializer(match).data)
+
+
+class MatchOverrideView(APIView):
+    """Corrects an already-completed match's recorded result. See
+    brackets.services.override_match_result for exactly when this is safe —
+    it refuses outright (ValidationError, not a silent partial fix) once
+    anything downstream has a recorded result of its own."""
+    permission_classes = [permissions.IsAuthenticated, IsTournamentStaffOrAdmin]
+
+    def patch(self, request, pk):
+        match = get_object_or_404(
+            Match.objects.select_related('tournament', 'player1', 'player2'), pk=pk,
+        )
+        self.check_object_permissions(request, match.tournament)
+
+        serializer = MatchOverrideSerializer(data=request.data, context={'match': match})
+        serializer.is_valid(raise_exception=True)
+
+        winner_id = serializer.validated_data['winner']
+        winner = match.player1 if match.player1_id == winner_id else match.player2
+        override_match_result(
+            match, request.user, winner,
+            serializer.validated_data.get('score', ''), serializer.validated_data['reason'],
+        )
+        return Response(MatchSerializer(match).data)
+
+
+class MatchForfeitView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsTournamentStaffOrAdmin]
+
+    def post(self, request, pk):
+        match = get_object_or_404(
+            Match.objects.select_related('tournament', 'player1', 'player2'), pk=pk,
+        )
+        self.check_object_permissions(request, match.tournament)
+
+        serializer = MatchForfeitSerializer(data=request.data, context={'match': match})
+        serializer.is_valid(raise_exception=True)
+
+        forfeiting_id = serializer.validated_data['forfeiting_player']
+        forfeiting_player = match.player1 if match.player1_id == forfeiting_id else match.player2
+        forfeit_match(match, request.user, forfeiting_player, serializer.validated_data['reason'])
+        return Response(MatchSerializer(match).data)
+
+
+class MatchScheduleView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsTournamentStaffOrAdmin]
+
+    def patch(self, request, pk):
+        match = get_object_or_404(Match.objects.select_related('tournament'), pk=pk)
+        self.check_object_permissions(request, match.tournament)
+
+        serializer = MatchScheduleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        match.scheduled_at = serializer.validated_data['scheduled_at']
+        match.save(update_fields=['scheduled_at'])
+        log_action(request.user, 'match.scheduled', match.tournament, scheduled_at=str(match.scheduled_at), match_id=match.pk)
+        return Response(MatchSerializer(match).data)
+
+
+class MatchNotesView(APIView):
+    """Organizer-private notes — deliberately its own endpoint rather than a field
+    on MatchSerializer; see that serializer's comment for why."""
+    permission_classes = [permissions.IsAuthenticated, IsTournamentStaffOrAdmin]
+
+    def get(self, request, pk):
+        match = get_object_or_404(Match.objects.select_related('tournament'), pk=pk)
+        self.check_object_permissions(request, match.tournament)
+        return Response({'organizer_notes': match.organizer_notes})
+
+    def patch(self, request, pk):
+        match = get_object_or_404(Match.objects.select_related('tournament'), pk=pk)
+        self.check_object_permissions(request, match.tournament)
+
+        serializer = MatchNotesSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        match.organizer_notes = serializer.validated_data['organizer_notes']
+        match.save(update_fields=['organizer_notes'])
+        return Response({'organizer_notes': match.organizer_notes})
+
+
+class MatchDisputeCreateView(APIView):
+    """Filing a dispute about a specific match — open to either player in it, in
+    addition to staff/organizer. See core.models.Dispute for how this and
+    TournamentDisputeListCreateView (tourny_regist.views) both feed the same
+    generic Dispute model without either app importing the other."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        match = get_object_or_404(Match.objects.select_related('tournament'), pk=pk)
+        is_stakeholder = (
+            IsTournamentStaffOrAdmin().has_object_permission(request, self, match.tournament)
+            or request.user.pk in (match.player1_id, match.player2_id)
+        )
+        if not is_stakeholder:
+            raise PermissionDenied('Only tournament staff or a player in this match may file a dispute.')
+
+        serializer = DisputeCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        dispute = Dispute.objects.create(
+            filed_by=request.user,
+            content_type=ContentType.objects.get_for_model(Match),
+            object_id=match.pk,
+            description=serializer.validated_data['description'],
+        )
+        log_action(request.user, 'dispute.filed', match.tournament, match_id=match.pk)
+        return Response(DisputeSerializer(dispute, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
 class TournamentNextRoundView(APIView):

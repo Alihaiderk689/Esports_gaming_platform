@@ -102,16 +102,49 @@ async function request(path, { method = "GET", body, auth = true, formData, quer
 
   const buildBody = () => (body ? (formData ? body : JSON.stringify(body)) : undefined);
 
-  let res = await safeFetch(url, { method, headers, body: buildBody(), credentials: "include" });
+  let res = await safeFetch(url, { method, headers, body: buildBody() });
 
   if (res.status === 401 && auth && tokenStorage.getRefresh()) {
     const ok = await refreshToken();
     if (ok) {
       headers.Authorization = `Bearer ${tokenStorage.get()}`;
-      res = await safeFetch(url, { method, headers, body: buildBody(), credentials: "include" });
+      res = await safeFetch(url, { method, headers, body: buildBody() });
     }
   }
   return handleResponse(res);
+}
+
+// For authenticated file downloads (e.g. CSV export) — a plain <a href> can't
+// carry the JWT bearer token, so callers fetch the Blob here and hand it to
+// the browser themselves via a synthetic download link.
+/**
+ * @param {string} path
+ * @param {{query?: Record<string, any>}} [options]
+ */
+async function requestBlob(path, { query } = {}) {
+  const url = new URL(API_BASE_URL + path);
+  if (query) {
+    Object.entries(query).forEach(([k, v]) => {
+      if (v != null && v !== "") url.searchParams.set(k, v);
+    });
+  }
+  const headers = {};
+  if (tokenStorage.get()) headers.Authorization = `Bearer ${tokenStorage.get()}`;
+
+  let res = await safeFetch(url, { method: "GET", headers });
+  if (res.status === 401 && tokenStorage.getRefresh()) {
+    const ok = await refreshToken();
+    if (ok) {
+      headers.Authorization = `Bearer ${tokenStorage.get()}`;
+      res = await safeFetch(url, { method: "GET", headers });
+    }
+  }
+  if (!res.ok) {
+    const err = /** @type {Error & {status?: number}} */ (new Error(`Request failed (${res.status})`));
+    err.status = res.status;
+    throw err;
+  }
+  return res.blob();
 }
 
 export const api = {
@@ -120,6 +153,7 @@ export const api = {
   patch: (p, body, opts) => request(p, { ...opts, method: "PATCH", body }),
   put: (p, body, opts) => request(p, { ...opts, method: "PUT", body }),
   delete: (p, opts) => request(p, { ...opts, method: "DELETE" }),
+  getBlob: (p, opts) => requestBlob(p, opts),
 };
 
 export const API_BASE = API_BASE_URL;

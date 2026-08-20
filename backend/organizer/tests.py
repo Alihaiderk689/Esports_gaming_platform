@@ -1,11 +1,14 @@
 import shutil
 import tempfile
+from io import BytesIO
 from unittest.mock import patch
 
 import cloudinary.exceptions
+import fitz
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -15,10 +18,26 @@ User = get_user_model()
 
 _MEDIA_ROOT = tempfile.mkdtemp(prefix='organizer_test_media_')
 
-# Real magic bytes so validate_document_file (core/validators.py) accepts them —
-# padded past the 8-byte header it sniffs, content beyond that is irrelevant.
-_JPEG_BYTES = b'\xff\xd8\xff\xe0' + b'\x00' * 16
-_PDF_BYTES = b'%PDF-1.4\n' + b'fake pdf body'.ljust(16, b'\x00')
+
+def _make_jpeg_bytes():
+    buf = BytesIO()
+    Image.new('RGB', (10, 10), color='blue').save(buf, format='JPEG')
+    return buf.getvalue()
+
+
+def _make_pdf_bytes():
+    doc = fitz.open()
+    doc.new_page()
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+# Genuinely decodable, not just correct magic bytes — validate_document_file
+# (core/validators.py) actually opens these with Pillow/PyMuPDF, not just
+# sniffs the header.
+_JPEG_BYTES = _make_jpeg_bytes()
+_PDF_BYTES = _make_pdf_bytes()
 
 
 @override_settings(MEDIA_ROOT=_MEDIA_ROOT)
@@ -241,6 +260,40 @@ class OrganizerApiTests(APITestCase):
         self.client.force_authenticate(user=other_user)
         resp = self.client.get('/api/organizer/status/')
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_resubmit_requires_auth(self):
+        self.client.force_authenticate(user=None)
+        resp = self.client.post('/api/organizer/resubmit/')
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_resubmit_before_registration_is_404(self):
+        resp = self.client.post('/api/organizer/resubmit/')
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_resubmit_rejected_application(self):
+        Organizer.objects.create(
+            user=self.user, company_name='Acme',
+            status=Organizer.Status.REJECTED, rejection_reason='CNIC image unreadable',
+        )
+        resp = self.client.post('/api/organizer/resubmit/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['status'], 'pending')
+        self.assertEqual(resp.data['rejection_reason'], '')
+
+        organizer = Organizer.objects.get(user=self.user)
+        self.assertEqual(organizer.status, Organizer.Status.PENDING)
+        self.assertEqual(organizer.rejection_reason, '')
+        self.assertEqual(organizer.last_seen_status, Organizer.Status.PENDING)
+
+    def test_resubmit_pending_rejected(self):
+        Organizer.objects.create(user=self.user, company_name='Acme', status=Organizer.Status.PENDING)
+        resp = self.client.post('/api/organizer/resubmit/')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_resubmit_approved_rejected(self):
+        Organizer.objects.create(user=self.user, company_name='Acme', status=Organizer.Status.APPROVED)
+        resp = self.client.post('/api/organizer/resubmit/')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 class AdminOrganizerApiTests(APITestCase):

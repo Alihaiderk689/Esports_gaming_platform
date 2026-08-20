@@ -16,15 +16,15 @@ export default function GoogleCallback() {
     ran.current = true;
 
     (async () => {
-      let idToken, from;
+      let idToken, state, from;
       try {
-        ({ idToken, from } = consumeGoogleCallback());
+        ({ idToken, state, from } = consumeGoogleCallback());
       } catch (err) {
         setError(err.message);
         return;
       }
       try {
-        const loggedInUser = await googleLogin(idToken);
+        const loggedInUser = await googleLogin(idToken, state);
         await routeAfterLogin(navigate, loggedInUser, from);
       } catch (err) {
         setError(err.message || "Google sign-in failed. Please try again.");

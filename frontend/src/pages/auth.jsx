@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/appauth";
 import { startGoogleSignIn } from "@/lib/googleAuth";
 import { routeAfterLogin } from "@/lib/routeAfterLogin";
 import { Gamepad2, Mail, Lock, User, Eye, EyeOff, ArrowRight, ArrowLeft, Shield, Swords, CheckCircle2, Circle, Loader2 } from "lucide-react";
+import Logo from "@/components/Logo";
 
 const NAME_REGEX = /^[A-Za-z]+(?:[ '-][A-Za-z]+)*$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -203,9 +204,7 @@ export default function Auth() {
 
         <div className="relative z-10 flex flex-col justify-between p-12 w-full">
           <Link to="/" className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-green-500 grid place-items-center neon-border">
-              <Gamepad2 className="w-6 h-6 text-background" strokeWidth={2.5} />
-            </div>
+            <Logo className="h-11 w-auto" />
             <div>
               <div className="font-display font-extrabold tracking-wider text-lg">ESPORTS</div>
               <div className="font-display font-bold text-xs gradient-text tracking-[0.3em]">PAKISTAN</div>
@@ -259,9 +258,7 @@ export default function Auth() {
           className="relative w-full max-w-md"
         >
           <Link to="/" className="lg:hidden flex items-center gap-2.5 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-green-500 grid place-items-center">
-              <Gamepad2 className="w-5 h-5 text-background" />
-            </div>
+            <Logo className="h-10 w-auto" />
             <div className="font-display font-extrabold tracking-wider">ESPORTS <span className="gradient-text">PK</span></div>
           </Link>
 
@@ -611,7 +608,7 @@ export default function Auth() {
 
             <button
               type="button"
-              onClick={() => startGoogleSignIn(from)}
+              onClick={() => startGoogleSignIn(from).catch((err) => setError(err.message))}
               className="w-full flex items-center justify-center gap-3 py-3 rounded-xl font-heading font-semibold text-sm glass hover:neon-border transition-all border border-border"
             >
               <GoogleIcon />

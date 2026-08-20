@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Hard gate (unlike the Trivy job's secret scanner below, which is
       # report-only) for the one specific, unambiguous case docs/SECURITY_CHECKLIST.md's
@@ -82,7 +82,7 @@ jobs:
       CSRF_COOKIE_SECURE: "False"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -111,7 +111,7 @@ jobs:
         working-directory: frontend
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Filesystem mode: scans backend/requirements.txt and
       # frontend/package-lock.json for known-vulnerable dependency versions,

@@ -92,7 +92,7 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Cache HuggingFace models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface
           key: hf-models-all-MiniLM-L6-v2-ms-marco-MiniLM-L-6-v2-v1

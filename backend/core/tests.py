@@ -1053,3 +1053,100 @@ class ProductionMonitoringCheckTests(TestCase):
             ENVIRONMENT='production', REDIS_URL='redis://localhost:6379/0', SENTRY_DSN='https://x@sentry.io/1',
         ):
             self.assertEqual(production_monitoring_check(None), [])
+
+
+class BrevoAPIBackendTests(TestCase):
+    """core.email_backend.BrevoAPIBackend — the SMTP replacement. Exercised
+    directly (not through django.core.mail.send_mail) since Django's test
+    runner always overrides EMAIL_BACKEND to the locmem backend during
+    tests — see core/tests.py's other email tests (mail.outbox) for that
+    path; this class is what actually proves the Brevo integration itself
+    is correct."""
+
+    def _message(self, **overrides):
+        from django.core.mail import EmailMessage
+        kwargs = dict(
+            subject='Verify your email',
+            body='Click the link: https://example.com/verify?token=abc',
+            from_email='noreply@example.com',
+            to=['player@example.com'],
+        )
+        kwargs.update(overrides)
+        return EmailMessage(**kwargs)
+
+    @patch('core.email_backend.requests.post')
+    def test_sends_correct_payload_and_headers(self, mock_post):
+        mock_post.return_value.status_code = 201
+        from core.email_backend import BrevoAPIBackend
+
+        backend = BrevoAPIBackend()
+        backend.api_key = 'test-api-key'
+        sent = backend.send_messages([self._message()])
+
+        self.assertEqual(sent, 1)
+        mock_post.assert_called_once()
+        _, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['headers']['api-key'], 'test-api-key')
+        self.assertEqual(kwargs['json']['sender'], {'email': 'noreply@example.com'})
+        self.assertEqual(kwargs['json']['to'], [{'email': 'player@example.com'}])
+        self.assertEqual(kwargs['json']['subject'], 'Verify your email')
+        self.assertEqual(kwargs['json']['textContent'], 'Click the link: https://example.com/verify?token=abc')
+
+    @patch('core.email_backend.requests.post')
+    def test_parses_display_name_in_from_email(self, mock_post):
+        mock_post.return_value.status_code = 201
+        from core.email_backend import BrevoAPIBackend
+
+        backend = BrevoAPIBackend()
+        backend.api_key = 'test-api-key'
+        backend.send_messages([self._message(from_email='Esports Pakistan <noreply@example.com>')])
+
+        _, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['json']['sender'], {'email': 'noreply@example.com', 'name': 'Esports Pakistan'})
+
+    @patch('core.email_backend.requests.post')
+    def test_api_error_raises_by_default(self, mock_post):
+        mock_post.return_value.status_code = 400
+        mock_post.return_value.text = '{"code":"invalid_parameter","message":"bad sender"}'
+        from core.email_backend import BrevoAPIBackend
+
+        backend = BrevoAPIBackend()
+        backend.api_key = 'test-api-key'
+        with self.assertRaises(Exception):
+            backend.send_messages([self._message()])
+
+    @patch('core.email_backend.requests.post')
+    def test_api_error_swallowed_when_fail_silently(self, mock_post):
+        mock_post.return_value.status_code = 500
+        mock_post.return_value.text = 'internal error'
+        from core.email_backend import BrevoAPIBackend
+
+        backend = BrevoAPIBackend(fail_silently=True)
+        backend.api_key = 'test-api-key'
+        sent = backend.send_messages([self._message()])
+        self.assertEqual(sent, 0)
+
+    def test_missing_api_key_raises_by_default(self):
+        from core.email_backend import BrevoAPIBackend
+
+        backend = BrevoAPIBackend()
+        backend.api_key = ''
+        with self.assertRaises(ValueError):
+            backend.send_messages([self._message()])
+
+    def test_missing_api_key_swallowed_when_fail_silently(self):
+        from core.email_backend import BrevoAPIBackend
+
+        backend = BrevoAPIBackend(fail_silently=True)
+        backend.api_key = ''
+        sent = backend.send_messages([self._message()])
+        self.assertEqual(sent, 0)
+
+    @patch('core.email_backend.requests.post')
+    def test_no_messages_is_a_noop(self, mock_post):
+        from core.email_backend import BrevoAPIBackend
+
+        backend = BrevoAPIBackend()
+        backend.api_key = 'test-api-key'
+        self.assertEqual(backend.send_messages([]), 0)
+        mock_post.assert_not_called()

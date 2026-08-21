@@ -112,7 +112,7 @@ When changing retrieval/reranking/prompting, use `python manage.py ask "<questio
 
 ## Environment
 
-Backend needs `backend/.env` (copy from `.env.example`): `SECRET_KEY`/`JWT_SECRET_KEY`, `DATABASE_URL_DEV`/`DATABASE_URL_PROD` (switched on `ENVIRONMENT`), Cloudinary creds, `CHROMA_API_KEY`/`CHROMA_TENANT`/`CHROMA_DATABASE`, `GROQ_API_KEY`/`GROQ_MODEL`, `GOOGLE_CLIENT_ID`, and SMTP settings for verification/reset emails (use an app password, not a real account password).
+Backend needs `backend/.env` (copy from `.env.example`): `SECRET_KEY`/`JWT_SECRET_KEY`, `DATABASE_URL_DEV`/`DATABASE_URL_PROD` (switched on `ENVIRONMENT`), Cloudinary creds, `CHROMA_API_KEY`/`CHROMA_TENANT`/`CHROMA_DATABASE`, `GROQ_API_KEY`/`GROQ_MODEL`, `GOOGLE_CLIENT_ID`, and `BREVO_API_KEY` for verification/reset/announcement emails, sent via Brevo's transactional email API (`core/email_backend.py`) rather than SMTP — left unset locally, email bodies just print to the console instead of sending.
 
 Frontend needs `frontend/.env`: `VITE_API_URL`, `VITE_GOOGLE_CLIENT_ID` (must match the backend's `GOOGLE_CLIENT_ID`).
 

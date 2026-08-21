@@ -75,7 +75,7 @@ Backend (`backend/.env`):
 | `CHROMA_API_KEY`, `CHROMA_TENANT`, `CHROMA_DATABASE` | Vector store for the rules assistant |
 | `GROQ_API_KEY`, `GROQ_MODEL` | LLM inference for the rules assistant |
 | `GOOGLE_CLIENT_ID` | Google Sign-In |
-| `EMAIL_BACKEND`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL` | Verification/reset emails (use an SMTP App Password, not a regular account password) |
+| `BREVO_API_KEY`, `DEFAULT_FROM_EMAIL` | Verification/reset/announcement emails, sent via Brevo's transactional email API — unset locally, emails print to the console instead of sending |
 
 Frontend (`frontend/.env`):
 

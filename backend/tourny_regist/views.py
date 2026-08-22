@@ -3,7 +3,7 @@ import csv
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -45,9 +45,12 @@ from tourny_regist.serializers import (
 
 
 class TournamentListView(generics.ListCreateAPIView):
+    # annotate(teams_count=...) so TournamentListSerializer.get_teams reads it
+    # off each row instead of running registrations.count() per tournament —
+    # was 1 extra query per tournament in the list, on the most-hit page.
     queryset = Tournament.objects.filter(
         status=Tournament.Status.APPROVED, is_published=True,
-    ).select_related('game', 'organizer').order_by('starts_at')
+    ).select_related('game', 'organizer').annotate(teams_count=Count('registrations')).order_by('starts_at')
 
     def get_serializer_class(self):
         return TournamentApplicationSerializer if self.request.method == 'POST' else TournamentListSerializer
@@ -88,7 +91,7 @@ class MyTournamentsView(generics.ListAPIView):
     def get_queryset(self):
         return Tournament.objects.filter(
             created_by=self.request.user,
-        ).select_related('game', 'organizer').order_by('-created_at')
+        ).select_related('game', 'organizer').annotate(teams_count=Count('registrations')).order_by('-created_at')
 
 
 class TournamentDetailView(generics.RetrieveUpdateDestroyAPIView):

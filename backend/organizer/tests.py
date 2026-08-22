@@ -218,6 +218,60 @@ class OrganizerApiTests(APITestCase):
         self.assertIn('company_document', resp.data)
         self.mock_upload.assert_not_called()
 
+    def test_upload_cnic_after_approval_reopens_review(self):
+        organizer = Organizer.objects.create(user=self.user, company_name='Acme', status=Organizer.Status.APPROVED)
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        resp = self.client.post('/api/organizer/upload-cnic/', {
+            'cnic_document': cnic_file, 'cnic_number': '35202-1234567-1',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['status'], 'pending')
+        organizer.refresh_from_db()
+        self.assertEqual(organizer.status, Organizer.Status.PENDING)
+
+        from core.models import AuditLog
+        entry = AuditLog.objects.filter(action='organizer.compliance_document_replaced').latest('created_at')
+        self.assertEqual(entry.actor_id, self.user.pk)
+        self.assertEqual(entry.metadata['document'], 'cnic_document')
+
+    def test_upload_company_document_after_approval_reopens_review(self):
+        organizer = Organizer.objects.create(user=self.user, company_name='Acme', status=Organizer.Status.APPROVED)
+        company_file = SimpleUploadedFile('registration.pdf', _PDF_BYTES, content_type='application/pdf')
+        resp = self.client.post('/api/organizer/upload-company/', {
+            'company_document': company_file, 'company_registration_number': 'REG-001',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['status'], 'pending')
+        organizer.refresh_from_db()
+        self.assertEqual(organizer.status, Organizer.Status.PENDING)
+
+    def test_upload_cnic_while_pending_does_not_touch_status(self):
+        organizer = Organizer.objects.create(user=self.user, company_name='Acme')
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        resp = self.client.post('/api/organizer/upload-cnic/', {
+            'cnic_document': cnic_file, 'cnic_number': '35202-1234567-1',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        organizer.refresh_from_db()
+        self.assertEqual(organizer.status, Organizer.Status.PENDING)
+
+    def test_upload_cnic_while_rejected_does_not_auto_resubmit(self):
+        # Re-uploading before calling the separate resubmit endpoint is the
+        # existing, expected flow (see OrganizerResubmitView's docstring) —
+        # only an already-APPROVED organizer's re-upload should force a
+        # status change.
+        organizer = Organizer.objects.create(
+            user=self.user, company_name='Acme', status=Organizer.Status.REJECTED, rejection_reason='blurry scan',
+        )
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        resp = self.client.post('/api/organizer/upload-cnic/', {
+            'cnic_document': cnic_file, 'cnic_number': '35202-1234567-1',
+        }, format='multipart')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        organizer.refresh_from_db()
+        self.assertEqual(organizer.status, Organizer.Status.REJECTED)
+        self.assertEqual(organizer.rejection_reason, 'blurry scan')
+
     def test_status_after_registration(self):
         Organizer.objects.create(user=self.user, company_name='Acme')
         resp = self.client.get('/api/organizer/status/')

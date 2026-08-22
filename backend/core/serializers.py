@@ -206,6 +206,14 @@ class PlayerSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_is_following(self, obj):
+        # _players_queryset(viewer=...) annotates this when the view passes the
+        # requesting user (no self-follow to exclude — Follow's own
+        # CheckConstraint makes follower == following impossible at the DB
+        # level). Falls back to a direct query only if some caller ever
+        # serializes a User queryset that wasn't built that way.
+        annotated = getattr(obj, 'is_following', None)
+        if annotated is not None:
+            return bool(annotated)
         request = self.context.get('request')
         if not request or not request.user.is_authenticated or request.user.pk == obj.pk:
             return False

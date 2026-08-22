@@ -21,11 +21,13 @@ from rag_chat.serializers import (
 )
 
 
+from games.models import Game
 from rag_chat.services.cloudinary_service import delete_pdf, upload_pdf
 from rag_chat.services.pdf_service import extract_text_from_pdf
 from rag_chat.services.chunk_service import split_text_into_chunks
 from rag_chat.services.embedding_service import generate_embeddings
 from rag_chat.services.chroma_service import add_chunks, delete_rulebook
+from rag_chat.services.game_detector import detect_games
 from rag_chat.services.retrieval_service import retrieve_candidates
 from rag_chat.services.rerank_service import rerank
 from rag_chat.services.prompt_service import build_context
@@ -34,6 +36,22 @@ from rag_chat.services.groq_service import GUARDRAIL_MESSAGE, generate_answer
 logger = logging.getLogger(__name__)
 
 _HISTORY_TURNS = 3
+
+
+def _ambiguous_game_clarification():
+    """Asked instead of running retrieval when neither the current question
+    nor the conversation history names a game at all - see
+    docs/EDGE_CASES.md's "ambiguous RAG question" entry. Guessing here risks
+    a vector/keyword match landing on the wrong game's rulebook and
+    confidently answering from it, which is worse than declining."""
+    examples = list(Game.objects.order_by('name').values_list('name', flat=True)[:5])
+    if examples:
+        return (
+            "I couldn't tell which game your question is about, and guessing could mean "
+            f"answering from the wrong game's rulebook. Could you name the game — for example: "
+            f"{', '.join(examples)}?"
+        )
+    return "I couldn't tell which game your question is about. Could you name the game you're asking about?"
 
 
 class ChatServiceUnavailable(APIException):
@@ -193,17 +211,29 @@ class ChatView(APIView):
 
         question = serializer.validated_data["message"]
 
+        recent_history = list(
+            ChatHistory.objects.filter(user=request.user).order_by("-created_at")[:_HISTORY_TURNS]
+        )
+        recent_history.reverse()
+        history_payload = [{"question": h.question, "answer": h.answer} for h in recent_history]
 
+        previous_game = recent_history[-1].game_name if recent_history else None
+
+        if not detect_games(question) and not previous_game:
+            # Neither this question nor the conversation so far names a game -
+            # an unscoped search here risks landing on the wrong game's
+            # rulebook and confidently answering from it. Ask instead of
+            # guessing; this never touches embeddings/Chroma/Groq, so an
+            # ambiguous question costs nothing beyond a cheap regex scan, and
+            # deliberately isn't saved as ChatHistory - there's no game
+            # context or grounded answer here for a later turn to fall back
+            # on.
+            return Response(
+                {'question': question, 'answer': _ambiguous_game_clarification(), 'game_name': ''},
+                status=status.HTTP_200_OK,
+            )
 
         try:
-
-            recent_history = list(
-                ChatHistory.objects.filter(user=request.user).order_by("-created_at")[:_HISTORY_TURNS]
-            )
-            recent_history.reverse()
-            history_payload = [{"question": h.question, "answer": h.answer} for h in recent_history]
-
-            previous_game = recent_history[-1].game_name if recent_history else None
 
             candidate_chunks, detected_game = retrieve_candidates(question, fallback_game=previous_game)
             retrieved_chunks = rerank(question, candidate_chunks, top_k=12)

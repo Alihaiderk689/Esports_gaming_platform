@@ -3,6 +3,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.audit import log_action
 from organizer.models import Organizer
 from organizer.serializers import (
     AdminOrganizerListSerializer,
@@ -22,6 +23,25 @@ def _get_organizer(user):
         return user.organizer_profile
     except Organizer.DoesNotExist:
         raise NotFound({'detail': 'You have not registered as an organizer yet.'})
+
+
+def _reopen_review_after_document_change(organizer, actor, field_label):
+    """An already-APPROVED organizer replacing their CNIC/company document
+    would otherwise silently swap out the identity/compliance document the
+    approval was actually based on, with no admin ever seeing the new one —
+    see docs/EDGE_CASES.md's "organizer re-uploading ... after already being
+    approved" entry. Sends the application back to PENDING so the new
+    document gets the same admin review a fresh application would, exactly
+    like resubmitting after a rejection. Deliberately a no-op for PENDING
+    (already awaiting a first review) and REJECTED (re-uploading before
+    resubmitting is the expected, unchanged flow — see
+    OrganizerResubmitView) - only APPROVED -> PENDING is a real re-review
+    event."""
+    if organizer.status != Organizer.Status.APPROVED:
+        return
+    organizer.status = Organizer.Status.PENDING
+    organizer.save(update_fields=['status', 'updated_at'])
+    log_action(actor, 'organizer.compliance_document_replaced', organizer, document=field_label)
 
 
 class OrganizerRegisterView(APIView):
@@ -45,6 +65,7 @@ class OrganizerUploadCnicView(APIView):
         serializer = CnicUploadSerializer(organizer, data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        _reopen_review_after_document_change(organizer, request.user, 'cnic_document')
         return Response(OrganizerProfileSerializer(organizer).data)
 
 
@@ -56,6 +77,7 @@ class OrganizerUploadCompanyView(APIView):
         serializer = CompanyUploadSerializer(organizer, data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        _reopen_review_after_document_change(organizer, request.user, 'company_document')
         return Response(OrganizerProfileSerializer(organizer).data)
 
 

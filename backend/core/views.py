@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core import signing
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Count, ProtectedError
+from django.db.models import Count, Exists, OuterRef, ProtectedError
 from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -63,8 +63,17 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
-def _players_queryset():
-    return User.objects.filter(is_active=True).annotate(
+def _players_queryset(viewer=None):
+    # is_following annotated only when a viewer is given (an authenticated
+    # request) — avoids PlayerSerializer.get_is_following running a Follow
+    # .exists() query per row, which was 1 extra query per player in every
+    # players-list response.
+    queryset = User.objects.filter(is_active=True)
+    if viewer is not None and viewer.is_authenticated:
+        queryset = queryset.annotate(
+            is_following=Exists(Follow.objects.filter(follower=viewer, following=OuterRef('pk'))),
+        )
+    return queryset.annotate(
         followers_count=Count('followers', distinct=True),
         following_count=Count('following', distinct=True),
     )
@@ -508,9 +517,11 @@ class IsAdminOrReadOnly(permissions.BasePermission):
 class PlayerListView(generics.ListAPIView):
     serializer_class = PlayerSerializer
     permission_classes = [permissions.IsAuthenticated]
-    queryset = _players_queryset().order_by('-date_joined')
     filter_backends = [filters.SearchFilter]
     search_fields = ['email', 'first_name', 'last_name']
+
+    def get_queryset(self):
+        return _players_queryset(self.request.user).order_by('-date_joined')
 
 
 class ProtectedUserDeleteMixin:
@@ -535,8 +546,10 @@ class ProtectedUserDeleteMixin:
 
 class PlayerDetailView(ProtectedUserDeleteMixin, generics.RetrieveUpdateDestroyAPIView):
     """Read access for any authenticated player; writes are admin-only (self-service lives at /players/me/)."""
-    queryset = _players_queryset()
     permission_classes = [permissions.IsAuthenticated, IsAdminOrReadOnly]
+
+    def get_queryset(self):
+        return _players_queryset(self.request.user)
 
     def get_serializer_class(self):
         if self.request.method in ('PATCH', 'PUT'):
@@ -548,7 +561,7 @@ class PlayerMeView(ProtectedUserDeleteMixin, generics.RetrieveUpdateDestroyAPIVi
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        return _players_queryset().get(pk=self.request.user.pk)
+        return _players_queryset(self.request.user).get(pk=self.request.user.pk)
 
     def get_serializer_class(self):
         if self.request.method in ('PATCH', 'PUT'):
@@ -559,7 +572,9 @@ class PlayerMeView(ProtectedUserDeleteMixin, generics.RetrieveUpdateDestroyAPIVi
 class PlayerTopView(generics.ListAPIView):
     serializer_class = PlayerSerializer
     permission_classes = [permissions.IsAuthenticated]
-    queryset = _players_queryset().order_by('-followers_count', '-date_joined')
+
+    def get_queryset(self):
+        return _players_queryset(self.request.user).order_by('-followers_count', '-date_joined')
 
 
 class PlayerFollowingView(generics.ListAPIView):
@@ -568,7 +583,7 @@ class PlayerFollowingView(generics.ListAPIView):
 
     def get_queryset(self):
         following_ids = Follow.objects.filter(follower=self.request.user).values_list('following_id', flat=True)
-        return _players_queryset().filter(pk__in=following_ids).order_by('-date_joined')
+        return _players_queryset(self.request.user).filter(pk__in=following_ids).order_by('-date_joined')
 
 
 class PlayerFollowView(APIView):

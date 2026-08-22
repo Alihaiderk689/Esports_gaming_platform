@@ -44,7 +44,14 @@ def _canonical_name_map(db_names):
     return canonical
 
 
-def detect_game(text, known_names=None):
+def detect_games(text, known_names=None):
+    """Every known game mentioned in `text`, canonicalized (see
+    _canonical_name_map) and deduped, most-mentioned first. Unlike
+    detect_game (a single best guess), this is what lets a caller notice a
+    question genuinely names more than one game instead of silently
+    collapsing to just one of them - see retrieval_service.retrieve_candidates,
+    which scopes a Chroma query to every game returned here rather than only
+    the top hit."""
     if known_names is None:
         known_names = get_known_game_names()
 
@@ -57,7 +64,26 @@ def detect_game(text, known_names=None):
             counts[name] = hits
 
     if not counts:
-        return None
+        return []
 
-    best = max(counts, key=counts.get)
-    return _canonical_name_map(_db_game_names()).get(best, best)
+    canonical_map = _canonical_name_map(_db_game_names())
+    merged = {}
+    # Iterates `counts` in the same order it was built (known_names' order,
+    # longest name first) so canonicalizing "Tekken" into "Tekken 8" merges
+    # into (rather than overwrites) a count "Tekken 8" already has of its own.
+    for name, hits in counts.items():
+        canonical = canonical_map.get(name, name)
+        merged[canonical] = merged.get(canonical, 0) + hits
+
+    # sorted() is stable, so a genuine tie preserves known_names' original
+    # order - the same tie-break max() gave the single-best-guess case below.
+    return sorted(merged, key=merged.get, reverse=True)
+
+
+def detect_game(text, known_names=None):
+    """The single best-guess game for `text` - back-compat wrapper around
+    detect_games for callers that only ever want one answer (e.g.
+    chunk_service.py tagging one rulebook section, which is never about more
+    than one game at a time)."""
+    games = detect_games(text, known_names)
+    return games[0] if games else None

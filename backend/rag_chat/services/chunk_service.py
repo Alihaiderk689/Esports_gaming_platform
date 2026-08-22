@@ -2,7 +2,7 @@ import re
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from rag_chat.services.embedding_service import model as _embedding_model
+from rag_chat.services.embedding_service import _get_model as _get_embedding_model
 from rag_chat.services.game_detector import detect_game, get_known_game_names
 
 # A game-level rulebook in this corpus always restarts at "1. Introduction",
@@ -31,7 +31,9 @@ _SPLIT_CHUNK_OVERLAP = 100
 
 
 def _token_length(text):
-    return len(_embedding_model.tokenizer.encode(text, add_special_tokens=False))
+    # Only called while actually splitting an oversized heading, not at
+    # import time - _get_embedding_model() stays lazy either way.
+    return len(_get_embedding_model().tokenizer.encode(text, add_special_tokens=False))
 
 
 _oversized_heading_splitter = RecursiveCharacterTextSplitter(

@@ -5,6 +5,11 @@ from core import views
 
 urlpatterns = [
     path('health/', views.health_check),
+    # Same view, second path — /api/core/health/ is what the GitHub Actions
+    # keep-alive workflow (.github/workflows/health-check.yml) pings; kept
+    # alongside the original /api/health/ rather than replacing it, since
+    # other tooling/uptime monitors may already point at that one.
+    path('core/health/', views.health_check),
 
     path('auth/register/', views.RegisterView.as_view()),
     path('auth/login/', views.LoginView.as_view()),

@@ -32,6 +32,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from core.audit import log_action
 from core.emails import send_password_reset_email, send_verification_email
 from core.models import Dispute, DisputeEvidence, Follow, PendingRegistration
+from core.otp import OtpVerificationError, can_resend, verify_otp
 from core.security_events import log_security_event
 from core.serializers import (
     AdminUserSerializer,
@@ -52,11 +53,11 @@ from core.serializers import (
     RegisterSerializer,
     ResendVerificationSerializer,
     ResetPasswordSerializer,
-    VerifyEmailSerializer,
+    VerifyOtpSerializer,
 )
 from core.storage import CloudinarySignedStorage
 from core.throttling import EmailActionEmailRateThrottle, LoginEmailRateThrottle
-from core.tokens import password_reset_token, pending_registration_token, revoke_all_sessions
+from core.tokens import password_reset_token, revoke_all_sessions
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -134,12 +135,12 @@ class RegisterView(generics.CreateAPIView):
         # verification" cover it instead.
         try:
             send_verification_email(pending)
-            detail = 'Check your email to verify it and finish creating your account.'
+            detail = 'Enter the verification code we emailed you to finish creating your account.'
         except Exception:
             logger.exception('Failed to send verification email for pending registration %s', pending.pk)
             detail = (
-                "We couldn't send the verification email right now. "
-                "Use \"Resend verification\" from the sign-in page once you're ready to try again."
+                "We couldn't send the verification code right now. "
+                "Use \"Resend code\" from the sign-in page once you're ready to try again."
             )
 
         if pending.role == 'organizer':
@@ -380,16 +381,35 @@ class ResetPasswordView(APIView):
 class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = 'email_action'
+    # A 6-digit code is brute-forceable in a way a 128-bit link token never
+    # was — layer the per-email throttle on top of the per-IP one (see
+    # ForgotPasswordView) in addition to otp_attempts' own lockout below.
+    throttle_classes = [ScopedRateThrottle, EmailActionEmailRateThrottle, UserRateThrottle, AnonRateThrottle]
 
-    def get(self, request):
-        serializer = VerifyEmailSerializer(data=request.query_params)
+    def post(self, request):
+        serializer = VerifyOtpSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        email = serializer.validated_data['email'].strip().lower()
+        code = serializer.validated_data['otp']
 
-        pending_id = _decode_uid(data['uid'])
-        pending = PendingRegistration.objects.filter(pk=pending_id).first() if pending_id else None
-        if pending is None or not pending_registration_token.check_token(pending, data['token']):
-            raise ValidationError({'token': 'Invalid or expired verification link.'})
+        pending = PendingRegistration.objects.filter(email__iexact=email).first()
+        if pending is None:
+            # Same generic error as a wrong/expired/locked code — doesn't
+            # reveal whether a pending registration exists for this email.
+            log_security_event('email_verification.failed', request=request, reason='no_pending_registration')
+            raise ValidationError({'otp': 'Invalid or expired code.'})
+
+        try:
+            verify_otp(pending, code)
+        except OtpVerificationError as exc:
+            log_security_event(
+                'email_verification.failed', request=request,
+                target_pending_id=pending.pk, reason=exc.message,
+            )
+            detail = {'otp': exc.message}
+            if exc.attempts_remaining is not None:
+                detail['attempts_remaining'] = exc.attempts_remaining
+            raise ValidationError(detail)
 
         # This is the only place a User (and, for organizer signups, an
         # Organizer) actually gets created — everything submitted at
@@ -426,6 +446,7 @@ class VerifyEmailView(APIView):
 
             pending.delete()
 
+        log_security_event('email_verification.completed', request=request, target_user_id=user.pk)
         return Response({'detail': 'Account created and email verified. You can sign in now.'})
 
 
@@ -440,12 +461,15 @@ class ResendVerificationView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data['email']
         pending = PendingRegistration.objects.filter(email__iexact=email).first()
-        if pending:
+        # can_resend enforces a cooldown independent of the hourly throttle
+        # above — the response stays generic either way, so this never
+        # reveals whether the email exists or is merely on cooldown.
+        if pending and can_resend(pending):
             try:
                 send_verification_email(pending)
             except Exception:
                 logger.exception('Failed to send verification email for pending registration %s', pending.pk)
-        return Response({'detail': 'If that email exists and is unverified, a link has been sent.'})
+        return Response({'detail': 'If that email exists and is unverified, a new code has been sent.'})
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):

@@ -1,3 +1,4 @@
+import re
 from io import BytesIO
 from unittest.mock import patch
 
@@ -9,6 +10,7 @@ from django.core import mail
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from PIL import Image
@@ -18,10 +20,15 @@ from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, Ou
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from core.models import AuditLog, Dispute, Follow, PendingRegistration
-from core.tokens import pending_registration_token
 from organizer.models import Organizer
 
 User = get_user_model()
+
+
+def _extract_otp(message):
+    match = re.search(r'\b(\d{6})\b', message.body)
+    assert match, f'no 6-digit code found in email body: {message.body!r}'
+    return match.group(1)
 
 
 def _make_jpeg_bytes():
@@ -43,6 +50,25 @@ def _make_pdf_bytes():
 # sniffs the header.
 _JPEG_BYTES = _make_jpeg_bytes()
 _PDF_BYTES = _make_pdf_bytes()
+
+
+class HealthCheckApiTests(APITestCase):
+    def test_health_check_ok(self):
+        resp = self.client.get('/api/health/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data, {'status': 'ok'})
+
+    def test_core_health_check_ok(self):
+        # /api/core/health/ — same view, second path, pinged by the GitHub
+        # Actions keep-alive workflow (.github/workflows/health-check.yml).
+        resp = self.client.get('/api/core/health/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data, {'status': 'ok'})
+
+    def test_health_check_requires_no_auth(self):
+        resp = self.client.get('/api/core/health/')
+        self.assertNotEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertNotEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class PlayerApiTests(APITestCase):
@@ -324,16 +350,13 @@ class VerifyEmailApiTests(APITestCase):
         payload.update(overrides)
         resp = self.client.post('/api/auth/register/', payload)
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
-        return PendingRegistration.objects.get(email=payload['email'].strip().lower())
-
-    def _verify_url(self, pending, token=None):
-        uid = urlsafe_base64_encode(force_bytes(pending.pk))
-        token = token if token is not None else pending_registration_token.make_token(pending)
-        return f'/api/auth/verify-email/?uid={uid}&token={token}'
+        pending = PendingRegistration.objects.get(email=payload['email'].strip().lower())
+        otp = _extract_otp(mail.outbox[-1])
+        return pending, otp
 
     def test_verify_creates_user_and_deletes_pending(self):
-        pending = self._register()
-        resp = self.client.get(self._verify_url(pending))
+        pending, otp = self._register()
+        resp = self.client.post('/api/auth/verify-email/', {'email': pending.email, 'otp': otp})
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
 
         user = User.objects.get(email='pending@example.com')
@@ -346,16 +369,41 @@ class VerifyEmailApiTests(APITestCase):
         )
         self.assertEqual(login_resp.status_code, status.HTTP_200_OK, login_resp.data)
 
-    def test_verify_invalid_token_rejected(self):
-        pending = self._register()
-        resp = self.client.get(self._verify_url(pending, token='not-a-real-token'))
+    def test_verify_wrong_otp_rejected(self):
+        pending, otp = self._register()
+        wrong = '000000' if otp != '000000' else '111111'
+        resp = self.client.post('/api/auth/verify-email/', {'email': pending.email, 'otp': wrong})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resp.data['attempts_remaining'], '4')
         self.assertFalse(User.objects.filter(email='pending@example.com').exists())
         self.assertTrue(PendingRegistration.objects.filter(pk=pending.pk).exists())
 
-    def test_verify_unknown_uid_rejected(self):
-        resp = self.client.get('/api/auth/verify-email/?uid=OTk5OTk5&token=bogus')
+    def test_verify_unknown_email_rejected(self):
+        resp = self.client.post('/api/auth/verify-email/', {'email': 'nobody@example.com', 'otp': '123456'})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_verify_expired_otp_rejected(self):
+        pending, otp = self._register()
+        PendingRegistration.objects.filter(pk=pending.pk).update(
+            otp_expires_at=timezone.now() - timezone.timedelta(seconds=1),
+        )
+        resp = self.client.post('/api/auth/verify-email/', {'email': pending.email, 'otp': otp})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('expired', resp.data['otp'])
+        self.assertTrue(PendingRegistration.objects.filter(pk=pending.pk).exists())
+
+    def test_verify_locks_out_after_max_attempts(self):
+        pending, otp = self._register()
+        wrong = '000000' if otp != '000000' else '111111'
+        for _ in range(4):
+            resp = self.client.post('/api/auth/verify-email/', {'email': pending.email, 'otp': wrong})
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 5th wrong attempt trips the lockout — the correct code no longer works either.
+        resp = self.client.post('/api/auth/verify-email/', {'email': pending.email, 'otp': wrong})
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Too many incorrect attempts', resp.data['otp'])
+        self.assertNotIn('attempts_remaining', resp.data)
 
 
 class VerifyEmailOrganizerApiTests(APITestCase):
@@ -390,9 +438,8 @@ class VerifyEmailOrganizerApiTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
 
         pending = PendingRegistration.objects.get(email='org@example.com')
-        uid = urlsafe_base64_encode(force_bytes(pending.pk))
-        token = pending_registration_token.make_token(pending)
-        verify_resp = self.client.get(f'/api/auth/verify-email/?uid={uid}&token={token}')
+        otp = _extract_otp(mail.outbox[-1])
+        verify_resp = self.client.post('/api/auth/verify-email/', {'email': 'org@example.com', 'otp': otp})
         self.assertEqual(verify_resp.status_code, status.HTTP_200_OK, verify_resp.data)
 
         user = User.objects.get(email='org@example.com')
@@ -407,11 +454,14 @@ class ResendVerificationApiTests(APITestCase):
     def setUp(self):
         cache.clear()  # see VerifyEmailApiTests.setUp — same throttle-reset reason
 
-    def test_resend_sends_new_email_for_pending(self):
+    def test_resend_sends_new_code_for_pending(self):
         self.client.post('/api/auth/register/', {
             'email': 'resend@example.com', 'password': 'StrongPass123!', 'confirm_password': 'StrongPass123!',
             'first_name': 'Res', 'last_name': 'End',
         })
+        # Clear the resend cooldown set by registration's own send, so this
+        # exercises the "resend after the cooldown has passed" path.
+        PendingRegistration.objects.filter(email='resend@example.com').update(otp_last_sent_at=None)
         mail.outbox.clear()
         resp = self.client.post('/api/auth/resend-verification/', {'email': 'resend@example.com'})
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
@@ -422,6 +472,34 @@ class ResendVerificationApiTests(APITestCase):
         resp = self.client.post('/api/auth/resend-verification/', {'email': 'nobody@example.com'})
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(len(mail.outbox), 0)
+
+    def test_resend_respects_cooldown(self):
+        self.client.post('/api/auth/register/', {
+            'email': 'cooldown@example.com', 'password': 'StrongPass123!', 'confirm_password': 'StrongPass123!',
+            'first_name': 'Cool', 'last_name': 'Down',
+        })
+        mail.outbox.clear()
+        # Immediately re-requesting a code, inside the 60s cooldown, is a silent no-op.
+        resp = self.client.post('/api/auth/resend-verification/', {'email': 'cooldown@example.com'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_verify_still_works_after_a_resend(self):
+        self.client.post('/api/auth/register/', {
+            'email': 'tworesend@example.com', 'password': 'StrongPass123!', 'confirm_password': 'StrongPass123!',
+            'first_name': 'Two', 'last_name': 'Resend',
+        })
+        pending = PendingRegistration.objects.get(email='tworesend@example.com')
+        pending.otp_last_sent_at = None
+        pending.save(update_fields=['otp_last_sent_at'])
+        mail.outbox.clear()
+        resp = self.client.post('/api/auth/resend-verification/', {'email': 'tworesend@example.com'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+
+        otp = _extract_otp(mail.outbox[-1])
+        verify_resp = self.client.post('/api/auth/verify-email/', {'email': 'tworesend@example.com', 'otp': otp})
+        self.assertEqual(verify_resp.status_code, status.HTTP_200_OK, verify_resp.data)
 
 
 class LoginApiTests(APITestCase):

@@ -450,6 +450,90 @@ class VerifyEmailOrganizerApiTests(APITestCase):
         self.assertFalse(PendingRegistration.objects.filter(pk=pending.pk).exists())
 
 
+class CleanupPendingRegistrationsCommandTests(APITestCase):
+    def setUp(self):
+        self.mock_upload = patch('cloudinary.uploader.upload').start()
+        self.mock_upload.return_value = {'public_id': 'test/fake-public-id'}
+        self.mock_destroy = patch('cloudinary.uploader.destroy').start()
+        self.mock_resource = patch(
+            'cloudinary.api.resource', side_effect=cloudinary.exceptions.NotFound('not found'),
+        ).start()
+        self.addCleanup(patch.stopall)
+
+    def _make_pending(self, email, age_days, **overrides):
+        defaults = {
+            'email': email, 'password_hash': 'x', 'first_name': 'A', 'last_name': 'B',
+        }
+        defaults.update(overrides)
+        pending = PendingRegistration.objects.create(**defaults)
+        # created_at is auto_now_add — back-date it directly rather than
+        # through the constructor, same as any other auto_now_add field.
+        PendingRegistration.objects.filter(pk=pending.pk).update(
+            created_at=timezone.now() - timezone.timedelta(days=age_days),
+        )
+        return pending
+
+    def _run(self, *args):
+        from io import StringIO
+
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('cleanup_pending_registrations', *args, stdout=out)
+        return out.getvalue()
+
+    def test_recent_pending_registration_not_deleted(self):
+        self._make_pending('fresh@example.com', age_days=1)
+        self._run()
+        self.assertTrue(PendingRegistration.objects.filter(email='fresh@example.com').exists())
+
+    def test_stale_pending_registration_deleted(self):
+        self._make_pending('stale@example.com', age_days=8)
+        output = self._run()
+        self.assertFalse(PendingRegistration.objects.filter(email='stale@example.com').exists())
+        self.assertIn('Deleted 1 expired pending registration', output)
+
+    def test_custom_retention_window_respected(self):
+        self._make_pending('three-days-old@example.com', age_days=3)
+        self._run('--older-than-days=2')
+        self.assertFalse(PendingRegistration.objects.filter(email='three-days-old@example.com').exists())
+
+    def test_dry_run_deletes_nothing(self):
+        self._make_pending('stale@example.com', age_days=10)
+        output = self._run('--dry-run')
+        self.assertTrue(PendingRegistration.objects.filter(email='stale@example.com').exists())
+        self.assertIn('1 pending registration(s) would be deleted', output)
+
+    def test_stale_organizer_signup_deletes_cloudinary_documents_too(self):
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        company_file = SimpleUploadedFile('registration.pdf', _PDF_BYTES, content_type='application/pdf')
+        pending = self._make_pending(
+            'org-stale@example.com', age_days=8, role='organizer',
+            cnic_document=cnic_file, company_document=company_file,
+        )
+        self.assertTrue(pending.cnic_document)
+        self.assertTrue(pending.company_document)
+
+        output = self._run()
+
+        self.assertFalse(PendingRegistration.objects.filter(pk=pending.pk).exists())
+        self.assertEqual(self.mock_destroy.call_count, 2)
+        self.assertIn('2 associated Cloudinary document(s)', output)
+
+    def test_cloudinary_delete_failure_does_not_block_row_deletion(self):
+        cnic_file = SimpleUploadedFile('cnic.jpg', _JPEG_BYTES, content_type='image/jpeg')
+        pending = self._make_pending(
+            'org-stale-2@example.com', age_days=8, role='organizer', cnic_document=cnic_file,
+        )
+        self.mock_destroy.side_effect = Exception('simulated Cloudinary outage')
+
+        self._run()
+
+        # The row is still gone even though the Cloudinary-side delete failed —
+        # a storage hiccup for one abandoned signup must not block the rest of
+        # the cleanup run, same principle as the announcement-email send loop.
+        self.assertFalse(PendingRegistration.objects.filter(pk=pending.pk).exists())
+
+
 class ResendVerificationApiTests(APITestCase):
     def setUp(self):
         cache.clear()  # see VerifyEmailApiTests.setUp — same throttle-reset reason
@@ -1228,3 +1312,48 @@ class BrevoAPIBackendTests(TestCase):
         backend.api_key = 'test-api-key'
         self.assertEqual(backend.send_messages([]), 0)
         mock_post.assert_not_called()
+
+    @patch('core.email_backend.requests.post')
+    def test_rejected_send_logs_status_code_and_response_body(self, mock_post):
+        # The status code + response body are what distinguish a bad API key
+        # (401) from an unverified sender (400, the specific silent-failure
+        # mode SECURITY_CHECKLIST.md warns about) from a transient 5xx — this
+        # must be visible in one log line, not only inside a stack trace.
+        mock_post.return_value.status_code = 400
+        mock_post.return_value.text = '{"code":"invalid_parameter","message":"sender not verified"}'
+        from core.email_backend import BrevoAPIBackend
+
+        backend = BrevoAPIBackend(fail_silently=True)
+        backend.api_key = 'test-api-key'
+        with self.assertLogs('core.email_backend', level='ERROR') as captured:
+            backend.send_messages([self._message()])
+
+        self.assertTrue(any('HTTP 400' in line for line in captured.output))
+        self.assertTrue(any('sender not verified' in line for line in captured.output))
+
+    @patch('core.email_backend.requests.post')
+    def test_unreachable_api_raises_and_is_logged_distinctly_from_a_rejection(self, mock_post):
+        import requests
+        from core.email_backend import BrevoAPIBackend
+
+        mock_post.side_effect = requests.exceptions.ConnectionError('DNS lookup failed')
+        backend = BrevoAPIBackend(fail_silently=True)
+        backend.api_key = 'test-api-key'
+        with self.assertLogs('core.email_backend', level='ERROR') as captured:
+            sent = backend.send_messages([self._message()])
+
+        self.assertEqual(sent, 0)
+        self.assertTrue(any('unreachable' in line for line in captured.output))
+        # Not logged as if Brevo had returned an HTTP response at all.
+        self.assertFalse(any('HTTP' in line for line in captured.output))
+
+    @patch('core.email_backend.requests.post')
+    def test_unreachable_api_still_raises_by_default(self, mock_post):
+        import requests
+        from core.email_backend import BrevoAPIBackend
+
+        mock_post.side_effect = requests.exceptions.Timeout('timed out')
+        backend = BrevoAPIBackend()
+        backend.api_key = 'test-api-key'
+        with self.assertRaises(Exception):
+            backend.send_messages([self._message()])

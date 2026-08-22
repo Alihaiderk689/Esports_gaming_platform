@@ -76,9 +76,12 @@ Run through this before every production deploy — not just the first one. Seve
 - [ ] Every new auth-adjacent or otherwise abuse-prone endpoint has a `throttle_scope` set, using an existing scope from `DEFAULT_THROTTLE_RATES` where it fits, or a newly added scope in that same table — not a hardcoded rate inline in the view.
 - [ ] A new endpoint that accepts an account identifier (email, username) in its body and is abuse-prone per-account (not just per-IP) considers a `core/throttling.py:PerFieldRateThrottle` subclass alongside its `ScopedRateThrottle`, the way `LoginView`/`ForgotPasswordView`/`ResendVerificationView` do — an IP-only limit doesn't stop an attack distributed across many IPs against one account.
 
-## Token blacklist cleanup
+## Scheduled cleanup
 
-- [ ] `python manage.py flushexpiredtokens` (ships with `djangorestframework-simplejwt`) is scheduled to run periodically in production (e.g. a Render Cron Job, or a Celery Beat task if Celery is ever introduced) — nothing in this repo runs it automatically today. Without it, `OutstandingToken`/`BlacklistedToken` rows accumulate forever; this is a performance/storage concern, not an access-control one on its own, but worth catching before the table gets large enough to matter.
+Neither of these runs automatically today — no Celery/RQ/task queue exists in this codebase (see `docs/ARCHITECTURE.md#background-jobs`), so "scheduled" means an external scheduler (a Render Cron Job, or `cron` directly) invoking a plain management command, not application code that fires on its own.
+
+- [ ] `python manage.py flushexpiredtokens` (ships with `djangorestframework-simplejwt`) is scheduled to run periodically in production (e.g. a Render Cron Job). Without it, `OutstandingToken`/`BlacklistedToken` rows accumulate forever; this is a performance/storage concern, not an access-control one on its own, but worth catching before the table gets large enough to matter.
+- [ ] `python manage.py cleanup_pending_registrations` (`core/management/commands/`) is scheduled alongside it — deletes `PendingRegistration` rows (abandoned email-OTP signups) older than 7 days by default (`--older-than-days` to adjust), along with any CNIC/company document already pushed to Cloudinary for an abandoned organizer signup. Run with `--dry-run` first against production to see what it would delete before scheduling it for real. Same non-issue as the token blacklist above: unscheduled, these just accumulate (storage growth), they don't leave anything accessible that shouldn't be.
 
 ## Dependency scanning
 

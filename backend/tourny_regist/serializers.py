@@ -115,7 +115,11 @@ class TournamentListSerializer(serializers.ModelSerializer):
         return obj.organizer.company_name if obj.organizer else None
 
     def get_teams(self, obj):
-        return obj.registrations.count()
+        # List views annotate teams_count on the queryset (Count('registrations'))
+        # to avoid a query per tournament; TournamentDetailSerializer (single
+        # object, no N+1 concern) falls back to the direct count.
+        teams_count = getattr(obj, 'teams_count', None)
+        return teams_count if teams_count is not None else obj.registrations.count()
 
     def get_phase(self, obj):
         if obj.starts_at is None:

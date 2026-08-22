@@ -55,11 +55,14 @@ EVAL_CASES = [
 
 DEFAULT_K = 12  # matches TOP_K used by ChatView / ask.py in production
 # Defaults to the same model the app already uses for generation (GROQ_MODEL)
-# rather than a bigger judge model - Groq's free tier caps tokens per day
-# *per model*, and a 70B-class judge burns through that cap in a handful of
-# eval runs. Pass --ragas-model to use a stronger, separately-quota'd judge
-# (e.g. llama-3.3-70b-versatile) when more headroom is available.
-DEFAULT_JUDGE_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+# rather than a separate judge model - Groq's free tier caps tokens per day
+# *per model*, and running a second model as judge burns through a second,
+# separate cap. Pass --ragas-model to use a different, separately-quota'd
+# judge when more headroom is available. Check `GET /openai/v1/models`
+# against the configured GROQ_API_KEY before picking one - Groq deprecates
+# models over time (llama-3.3-70b-versatile and llama-3.1-8b-instant, this
+# fallback's previous defaults, are both gone as of 2026-08).
+DEFAULT_JUDGE_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 RAGAS_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 

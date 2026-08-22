@@ -58,7 +58,7 @@ Answer:
 
     response = client.chat.completions.create(
 
-        model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
 
         messages=messages,
 

@@ -81,17 +81,43 @@ class BrevoAPIBackend(BaseEmailBackend):
         if message.reply_to:
             payload['replyTo'] = _address_dict(message.reply_to[0])
 
-        response = requests.post(
-            BREVO_SEND_URL,
-            json=payload,
-            headers={
-                'accept': 'application/json',
-                'content-type': 'application/json',
-                'api-key': self.api_key,
-            },
-            timeout=REQUEST_TIMEOUT,
-        )
+        try:
+            response = requests.post(
+                BREVO_SEND_URL,
+                json=payload,
+                headers={
+                    'accept': 'application/json',
+                    'content-type': 'application/json',
+                    'api-key': self.api_key,
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.exceptions.RequestException as exc:
+            # Split from the non-2xx case below: this is Brevo being
+            # unreachable at all (network blip, DNS, timeout) — a different
+            # failure mode than Brevo actively rejecting the request, and one
+            # a caller diagnosing "why aren't emails sending" needs to be
+            # able to tell apart from the other at a glance, not by parsing a
+            # generic traceback. Logged before raising so send_messages'
+            # per-recipient try/except (the "one bad recipient doesn't break
+            # the batch" guarantee) still applies unchanged above this.
+            logger.error(
+                'Brevo API unreachable sending to %s (subject=%r): %s', message.to, message.subject, exc,
+            )
+            raise RuntimeError(f'Could not reach the Brevo API sending to {message.to}: {exc}') from exc
+
         if response.status_code >= 400:
+            # The status code + response body are exactly what distinguishes
+            # "BREVO_API_KEY is wrong" (401) from "sender not verified in
+            # Brevo's dashboard" (400, the specific silent-failure mode
+            # docs/SECURITY_CHECKLIST.md warns about) from a transient 5xx —
+            # log them as their own clearly-labeled line, not just folded
+            # into a stack trace, so that distinction is visible without
+            # reproducing the failure separately to find out which one it was.
+            logger.error(
+                'Brevo API rejected an email to %s (subject=%r): HTTP %s — %s',
+                message.to, message.subject, response.status_code, response.text[:500],
+            )
             raise RuntimeError(
                 f'Brevo API returned {response.status_code} sending to {message.to}: {response.text[:500]}',
             )

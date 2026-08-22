@@ -53,10 +53,29 @@ def delete_rulebook(rulebook_id):
     _get_collection().delete(where={"rulebook_id": rulebook_id})
 
 
+def _game_where(game_name):
+    """`game_name` is usually a single string, but a question naming more than
+    one game (see game_detector.detect_games) needs to scope a query to all
+    of them at once rather than collapsing to just one - Chroma's `$in`
+    operator does that in a single query, so this never needs to fall back
+    to running one query per game and merging results."""
+    if not game_name:
+        return None
+    if isinstance(game_name, str):
+        return {"game_name": game_name}
+    names = [name for name in game_name if name]
+    if not names:
+        return None
+    if len(names) == 1:
+        return {"game_name": names[0]}
+    return {"game_name": {"$in": names}}
+
+
 def query(query_embedding, n_results=20, game_name=None):
     kwargs = {"query_embeddings": [query_embedding], "n_results": n_results}
-    if game_name:
-        kwargs["where"] = {"game_name": game_name}
+    where = _game_where(game_name)
+    if where:
+        kwargs["where"] = where
 
     results = _get_collection().query(**kwargs)
     return results.get("documents", [[]])[0]
@@ -64,8 +83,9 @@ def query(query_embedding, n_results=20, game_name=None):
 
 def keyword_query(keyword, n_results=10, game_name=None):
     kwargs = {"where_document": {"$contains": keyword}, "limit": n_results, "include": ["documents"]}
-    if game_name:
-        kwargs["where"] = {"game_name": game_name}
+    where = _game_where(game_name)
+    if where:
+        kwargs["where"] = where
 
     results = _get_collection().get(**kwargs)
     return results.get("documents", [])

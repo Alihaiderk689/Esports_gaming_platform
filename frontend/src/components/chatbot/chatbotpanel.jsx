@@ -1,7 +1,28 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Sparkles, Bot } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { api } from "@/lib/api";
+
+// The assistant's answers come back as markdown (headings, bold, numbered/
+// bulleted lists) — these overrides keep that structure but at chat-bubble
+// scale (default react-markdown element spacing is sized for full-page prose,
+// not a 78%-width bubble).
+const markdownComponents = {
+  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  ul: ({ children }) => <ul className="mb-2 last:mb-0 pl-4 space-y-1 list-disc">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-2 last:mb-0 pl-4 space-y-1 list-decimal">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  h1: ({ children }) => <p className="mb-1.5 font-heading font-bold text-[15px]">{children}</p>,
+  h2: ({ children }) => <p className="mb-1.5 font-heading font-bold text-[15px]">{children}</p>,
+  h3: ({ children }) => <p className="mb-1 font-heading font-semibold">{children}</p>,
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="underline text-primary">
+      {children}
+    </a>
+  ),
+};
 
 export default function ChatbotPanel({ open, onClose }) {
   const [messages, setMessages] = useState([
@@ -102,7 +123,11 @@ export default function ChatbotPanel({ open, onClose }) {
                         : "bg-muted text-foreground rounded-tl-sm"
                     }`}
                   >
-                    {m.content}
+                    {m.role === "assistant" ? (
+                      <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
+                    ) : (
+                      m.content
+                    )}
                   </div>
                 </motion.div>
               ))}

@@ -83,6 +83,8 @@ Key model relationships:
 
 **None exist.** No Celery, RQ, django-q, or any task queue is configured anywhere in this codebase — confirmed by an empty dependency list and zero `@shared_task`/`.delay(`/`apply_async` call sites. Every operation that looks job-like (sending email, calling Cloudinary/Groq/Chroma) runs synchronously inline in the request/response cycle. This is a real architectural property, not a gap being tracked: if a future feature needs a queue, it starts from zero, not from an underused existing one.
 
+Periodic maintenance that *does* exist (`flushexpiredtokens`, ships with `djangorestframework-simplejwt`; `core/management/commands/cleanup_pending_registrations.py`, this codebase's own) follows the same "no queue" property deliberately — each is a plain Django management command meant to be invoked by an external scheduler (a Render Cron Job, or `cron` directly), not application code that fires anything on its own. See `docs/SECURITY_CHECKLIST.md`'s "Scheduled cleanup" section for what's actually scheduled versus what merely exists as a command today.
+
 ## External APIs
 
 | Service | Used for | Where | Failure handling |

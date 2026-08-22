@@ -455,6 +455,9 @@ class CleanupPendingRegistrationsCommandTests(APITestCase):
         self.mock_upload = patch('cloudinary.uploader.upload').start()
         self.mock_upload.return_value = {'public_id': 'test/fake-public-id'}
         self.mock_destroy = patch('cloudinary.uploader.destroy').start()
+        self.mock_resource = patch(
+            'cloudinary.api.resource', side_effect=cloudinary.exceptions.NotFound('not found'),
+        ).start()
         self.addCleanup(patch.stopall)
 
     def _make_pending(self, email, age_days, **overrides):

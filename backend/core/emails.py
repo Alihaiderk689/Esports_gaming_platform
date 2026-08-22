@@ -3,7 +3,8 @@ from django.core.mail import send_mail
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-from core.tokens import password_reset_token, pending_registration_token
+from core.otp import OTP_TTL, issue_otp
+from core.tokens import password_reset_token
 
 
 def _uid_for(obj):
@@ -11,12 +12,15 @@ def _uid_for(obj):
 
 
 def send_verification_email(pending_registration):
-    uid = _uid_for(pending_registration)
-    token = pending_registration_token.make_token(pending_registration)
-    link = f'{settings.FRONTEND_URL}/verify-email?uid={uid}&token={token}'
+    otp = issue_otp(pending_registration)
+    minutes = int(OTP_TTL.total_seconds() // 60)
     send_mail(
-        subject='Verify your email',
-        message=f'Click the link to verify your email and finish creating your account: {link}',
+        subject='Your Esports Pakistan verification code',
+        message=(
+            f'Your verification code is: {otp}\n\n'
+            f'Enter this code to finish creating your account. It expires in {minutes} minutes.\n\n'
+            "If you didn't request this, you can safely ignore this email."
+        ),
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[pending_registration.email],
     )

@@ -172,9 +172,9 @@ class ResetPasswordSerializer(serializers.Serializer):
         return attrs
 
 
-class VerifyEmailSerializer(serializers.Serializer):
-    uid = serializers.CharField()
-    token = serializers.CharField()
+class VerifyOtpSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.RegexField(r'^\d{6}$', error_messages={'invalid': 'Enter the 6-digit verification code.'})
 
 
 class ResendVerificationSerializer(serializers.Serializer):

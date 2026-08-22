@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/appauth";
+import { api } from "@/lib/api";
 import { startGoogleSignIn } from "@/lib/googleAuth";
 import { routeAfterLogin } from "@/lib/routeAfterLogin";
 import { Gamepad2, Mail, Lock, User, Eye, EyeOff, ArrowRight, ArrowLeft, Shield, Swords, CheckCircle2, Circle, Loader2 } from "lucide-react";
@@ -9,6 +10,18 @@ import Logo from "@/components/Logo";
 
 const NAME_REGEX = /^[A-Za-z]+(?:[ '-][A-Za-z]+)*$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Mirrors backend/core/otp.py's OTP_TTL / OTP_RESEND_COOLDOWN — purely for
+// the client-side countdown display. The backend is the actual source of
+// truth for expiry; this can drift a few seconds without being a problem.
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+
+function formatMMSS(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 function getNameError(value, label) {
   const trimmed = value.trim();
@@ -43,10 +56,34 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState(location.state?.info || "");
-  const [justRegistered, setJustRegistered] = useState(false);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", password: "", confirm: "" });
   const [submitted, setSubmitted] = useState(false);
   const [orgStep, setOrgStep] = useState(1); // 1: account details, 2: organizer application
+
+  // Post-registration OTP entry — shown in place of the login/signup form
+  // until the emailed code is verified (or the user backs out).
+  const [otpMode, setOtpMode] = useState(false);
+  const [otpEmail, setOtpEmail] = useState("");
+  const [otpValue, setOtpValue] = useState("");
+  const [otpError, setOtpError] = useState("");
+  const [otpInfo, setOtpInfo] = useState("");
+  const [otpAttemptsLeft, setOtpAttemptsLeft] = useState(null);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpResending, setOtpResending] = useState(false);
+  const [otpExpiresAt, setOtpExpiresAt] = useState(null);
+  const [resendCooldownUntil, setResendCooldownUntil] = useState(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!otpMode) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [otpMode]);
+
+  const otpSecondsLeft = otpExpiresAt ? Math.max(0, Math.ceil((otpExpiresAt - now) / 1000)) : 0;
+  const otpExpired = otpExpiresAt !== null && otpSecondsLeft <= 0;
+  const resendSecondsLeft = resendCooldownUntil ? Math.max(0, Math.ceil((resendCooldownUntil - now) / 1000)) : 0;
+  const canResend = resendSecondsLeft <= 0;
   const emptyOrgForm = {
     company_name: "", phone_number: "", address: "",
     cnic_number: "", cnic_document: null,
@@ -164,22 +201,63 @@ export default function Auth() {
             role: "user",
           });
         }
-        setMode("login");
         setForm((f) => ({ ...f, password: "", confirm: "" }));
         setOrgForm(emptyOrgForm);
         setSubmitted(false);
         setOrgStep(1);
-        setInfo(
+        setOtpEmail(email);
+        setOtpValue("");
+        setOtpError("");
+        setOtpAttemptsLeft(null);
+        setOtpInfo(
           role === "organizer"
-            ? "Check your email to verify it and finish creating your account. Once verified, your organizer application will be submitted for review."
-            : "Check your email to verify it and finish creating your account.",
+            ? "Once verified, your organizer application will be submitted for review."
+            : "",
         );
-        setJustRegistered(true);
+        setOtpExpiresAt(Date.now() + OTP_TTL_MS);
+        setResendCooldownUntil(Date.now() + OTP_RESEND_COOLDOWN_MS);
+        setOtpMode(true);
       }
     } catch (err) {
       setError(err.message || "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const submitOtp = async (e) => {
+    e.preventDefault();
+    setOtpError("");
+    setOtpLoading(true);
+    try {
+      await api.post("/api/auth/verify-email/", { email: otpEmail, otp: otpValue }, { auth: false });
+      setOtpMode(false);
+      setOtpValue("");
+      setMode("login");
+      setError("");
+      setInfo("Account created and email verified. You can sign in now.");
+    } catch (err) {
+      const data = err.data || {};
+      const otpMsg = Array.isArray(data.otp) ? data.otp[0] : data.otp;
+      setOtpError(otpMsg || err.message || "Invalid or expired code.");
+      setOtpAttemptsLeft(data.attempts_remaining != null ? Number(data.attempts_remaining) : null);
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const resendOtp = async () => {
+    setOtpResending(true);
+    setOtpError("");
+    try {
+      await api.post("/api/auth/resend-verification/", { email: otpEmail }, { auth: false });
+      setOtpValue("");
+      setOtpAttemptsLeft(null);
+      setOtpInfo("A new code has been sent — check your inbox.");
+      setOtpExpiresAt(Date.now() + OTP_TTL_MS);
+      setResendCooldownUntil(Date.now() + OTP_RESEND_COOLDOWN_MS);
+    } finally {
+      setOtpResending(false);
     }
   };
 
@@ -263,6 +341,105 @@ export default function Auth() {
           </Link>
 
           <div className="glass rounded-2xl border border-border/60 p-6 sm:p-8">
+            {otpMode ? (
+              <>
+                <div className="w-14 h-14 rounded-full bg-primary/10 grid place-items-center mx-auto mb-4">
+                  <Mail className="w-7 h-7 text-primary" />
+                </div>
+                <h2 className="font-display font-bold text-2xl mb-1 text-center">Verify your email</h2>
+                <p className="text-sm text-muted-foreground mb-6 text-center">
+                  Enter the 6-digit code we sent to <span className="text-foreground font-medium">{otpEmail}</span>.
+                </p>
+
+                <form onSubmit={submitOtp} noValidate className="space-y-4">
+                  <div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      placeholder="000000"
+                      value={otpValue}
+                      onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      className="w-full text-center tracking-[0.5em] text-2xl font-heading font-bold px-4 py-3.5 rounded-xl bg-muted/40 border border-border outline-none focus:border-primary focus:neon-border transition-all placeholder:text-muted-foreground/40"
+                      autoFocus
+                    />
+                    <div className="mt-2 text-xs text-muted-foreground text-center">
+                      {otpExpired ? (
+                        <span className="text-destructive">Code expired — request a new one.</span>
+                      ) : (
+                        <>Code expires in {formatMMSS(otpSecondsLeft)}</>
+                      )}
+                    </div>
+                  </div>
+
+                  {otpError && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2"
+                    >
+                      {otpError}
+                      {otpAttemptsLeft !== null && ` (${otpAttemptsLeft} attempt${otpAttemptsLeft === 1 ? "" : "s"} left)`}
+                    </motion.div>
+                  )}
+
+                  {otpInfo && !otpError && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-sm text-primary bg-primary/10 border border-primary/30 rounded-lg px-3 py-2"
+                    >
+                      {otpInfo}
+                    </motion.div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={otpLoading || otpValue.length !== 6 || otpExpired}
+                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-heading font-bold text-base bg-primary text-primary-foreground hover:shadow-[0_0_28px_hsl(186_100%_50%/0.5)] transition-shadow disabled:opacity-60"
+                  >
+                    {otpLoading ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        Verify & Create Account
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={resendOtp}
+                    disabled={!canResend || otpResending}
+                    className="w-full text-sm font-heading font-semibold text-primary hover:underline disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
+                  >
+                    {otpResending ? "Sending…" : canResend ? "Resend code" : `Resend code in ${formatMMSS(resendSecondsLeft)}`}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => { setOtpMode(false); setMode("login"); setOtpError(""); setOtpInfo(""); }}
+                    className="w-full text-xs text-muted-foreground hover:text-primary text-center transition-colors"
+                  >
+                    Back to sign in
+                  </button>
+                </form>
+
+                <p className="mt-5 text-center text-xs text-muted-foreground">
+                  Lost this screen?{" "}
+                  <Link
+                    to={`/verify-email?email=${encodeURIComponent(otpEmail)}`}
+                    className="text-primary hover:underline"
+                  >
+                    Enter your code here
+                  </Link>
+                  .
+                </p>
+              </>
+            ) : (
+              <>
             {/* Toggle */}
             <div className="relative flex p-1 rounded-xl bg-muted/50 mb-6">
               <motion.div
@@ -548,14 +725,6 @@ export default function Auth() {
                   className="text-sm text-primary bg-primary/10 border border-primary/30 rounded-lg px-3 py-2"
                 >
                   {info}
-                  {justRegistered && (
-                    <>
-                      {" "}
-                      <Link to="/verify-email" className="underline hover:no-underline">
-                        Didn't get it? Resend.
-                      </Link>
-                    </>
-                  )}
                 </motion.div>
               )}
 
@@ -620,6 +789,8 @@ export default function Auth() {
               <span className="text-primary hover:underline cursor-pointer">Terms</span> &{" "}
               <span className="text-primary hover:underline cursor-pointer">Privacy Policy</span>.
             </p>
+              </>
+            )}
           </div>
         </motion.div>
       </div>

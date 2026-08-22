@@ -1,10 +1,18 @@
 from sentence_transformers import SentenceTransformer
 
+# Lazy-loaded on first actual generate_embeddings() call - see
+# rerank_service.py's _get_model() for why this can't happen at import time:
+# this module gets imported just by resolving *any* URL, including endpoints
+# with nothing to do with the RAG assistant.
+_model = None
 
-# Load model once
-model = SentenceTransformer(
-    "all-MiniLM-L6-v2"
-)
+
+def _get_model():
+    global _model
+    if _model is None:
+        _model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _model
+
 
 def generate_embeddings(text_chunks):
 
@@ -24,7 +32,7 @@ def generate_embeddings(text_chunks):
     ]
     """
 
-    embeddings = model.encode(
+    embeddings = _get_model().encode(
         text_chunks,
         show_progress_bar=True,
         normalize_embeddings=True

@@ -54,12 +54,13 @@ GOOGLE_CLIENT_ID = env('GOOGLE_CLIENT_ID', default='')
 
 ANTHROPIC_API_KEY = env('ANTHROPIC_API_KEY', default='')
 
-EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = env('EMAIL_HOST', default='')
-EMAIL_PORT = env.int('EMAIL_PORT', default=587)
-EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
-EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
+# Sends via Brevo's transactional email API (core/email_backend.py) once
+# BREVO_API_KEY is set — no SMTP host/port/credentials needed. Unset (local
+# dev without a Brevo account) falls back to Django's console backend, same
+# as before. See the ENVIRONMENT==production guard below for why this can't
+# silently stay on the console backend in production.
+BREVO_API_KEY = env('BREVO_API_KEY', default='')
+EMAIL_BACKEND = 'core.email_backend.BrevoAPIBackend' if BREVO_API_KEY else 'django.core.mail.backends.console.EmailBackend'
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@example.com')
 
 
@@ -200,20 +201,18 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 ENVIRONMENT = env('ENVIRONMENT', default='development')
 
-# The console backend prints full email bodies — including password-reset
-# and email-verification links with their signed tokens — to stdout. Fine
-# in dev; a real credential/token leak (into deploy logs, log aggregators,
-# anyone with log access) if it were ever left on in production. Previously
-# only documented as a checklist item; enforced here the same way
-# SECRET_KEY/JWT_SECRET_KEY already refuse to start if unset, since this is
-# exactly that class of mistake — better to fail loudly at startup than
-# silently leak tokens to logs.
-if ENVIRONMENT == 'production' and 'console' in EMAIL_BACKEND.lower():
+# Without BREVO_API_KEY, EMAIL_BACKEND above silently fell back to the
+# console backend, which prints full email bodies — including password-reset
+# and email-verification links with their signed tokens — to stdout. Fine in
+# dev; a real credential/token leak (into deploy logs, log aggregators,
+# anyone with log access) if it were ever left that way in production. Same
+# "refuse to start" treatment as SECRET_KEY/JWT_SECRET_KEY, for the same
+# reason: better to fail loudly at startup than silently leak tokens to logs.
+if ENVIRONMENT == 'production' and not BREVO_API_KEY:
     raise ImproperlyConfigured(
-        'EMAIL_BACKEND is the console backend in production — this would print password-reset/'
-        'verification links (with their tokens) to stdout instead of emailing them. Set '
-        'EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend and the EMAIL_HOST/'
-        'EMAIL_HOST_USER/EMAIL_HOST_PASSWORD vars in the production environment.'
+        'BREVO_API_KEY is not set in production — email would silently fall back to the console '
+        'backend, printing password-reset/verification links (with their tokens) to stdout '
+        'instead of emailing them. Set BREVO_API_KEY in the production environment.'
     )
 
 DATABASE_URL = (

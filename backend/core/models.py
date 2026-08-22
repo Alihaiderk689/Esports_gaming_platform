@@ -55,11 +55,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class PendingRegistration(models.Model):
-    # No User (or Organizer, for organizer signups) exists until the email
-    # verification link is clicked — this holds everything submitted at
-    # /api/auth/register/ time until then, so an unverified/fake email never
-    # results in a usable account. See core/views.py's VerifyEmailView for
-    # where this gets converted into the real User/Organizer rows.
+    # No User (or Organizer, for organizer signups) exists until the emailed
+    # OTP is verified — this holds everything submitted at /api/auth/register/
+    # time until then, so an unverified/fake email never results in a usable
+    # account. See core/views.py's VerifyEmailView for where this gets
+    # converted into the real User/Organizer rows.
     email = models.EmailField(unique=True)
     password_hash = models.CharField(max_length=255)
     first_name = models.CharField(max_length=150)
@@ -84,6 +84,13 @@ class PendingRegistration(models.Model):
     bank_name = models.CharField(max_length=150, blank=True)
     bank_account_title = models.CharField(max_length=150, blank=True)
     bank_account_number = models.CharField(max_length=50, blank=True)
+
+    # Verification is by one-time code, not an emailed link — see core/otp.py.
+    # Only the hash is ever stored, same as password_hash above.
+    otp_hash = models.CharField(max_length=255, blank=True)
+    otp_expires_at = models.DateTimeField(null=True, blank=True)
+    otp_attempts = models.PositiveSmallIntegerField(default=0)
+    otp_last_sent_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 

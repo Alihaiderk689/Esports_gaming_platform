@@ -1,13 +1,6 @@
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
-
-class PendingRegistrationTokenGenerator(PasswordResetTokenGenerator):
-    def _make_hash_value(self, pending, timestamp):
-        return f'{pending.pk}{pending.email}{timestamp}'
-
-
-pending_registration_token = PendingRegistrationTokenGenerator()
 password_reset_token = PasswordResetTokenGenerator()
 
 

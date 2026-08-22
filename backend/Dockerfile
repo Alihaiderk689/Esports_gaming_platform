@@ -37,4 +37,8 @@ USER appuser
 EXPOSE 8000
 
 ENTRYPOINT ["./entrypoint.sh"]
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "120"]
+# --workers 1: each worker loads its own full copy of rag_chat's eagerly-loaded
+# sentence-transformers embedding + reranking models (see the RUN step above) —
+# on a 512MB instance, 3 workers x that footprint is what was causing OOM kills
+# under real load. Bump this only alongside a larger instance size.
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120"]

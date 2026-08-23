@@ -11,15 +11,23 @@ name: Backend Health Check
 # *secret*, since it's just the public base URL the frontend already calls.
 
 on:
+  # Every 5, not 10: Render's free tier spins an instance down after ~15
+  # minutes with no incoming traffic, and this ping is the only thing
+  # standing between it and that sleep. A 10-minute cadence leaves almost
+  # no margin for a GitHub Actions scheduled run landing late (GitHub does
+  # not guarantee schedule punctuality — see the note in the "Call health
+  # endpoint" step below for a real instance of this), so a single delayed
+  # run could let the 15-minute window lapse. 5 minutes leaves enough slack
+  # that one late run alone can't cause a spin-down.
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
   ping:
     name: Ping /api/core/health/
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
       - name: Check PRODUCTION_BACKEND_URL is configured
         run: |
@@ -34,11 +42,14 @@ jobs:
       # in-progress cold start got cut off before it could ever answer, so
       # every retry restarted the wait from zero instead of just outlasting
       # it — the ping (whose whole job is to prevent that sleep) failed
-      # precisely when the instance most needed waking. Wider per-attempt
-      # and total budgets let one attempt actually sit through a cold start.
+      # precisely when the instance most needed waking. Confirmed against a
+      # real cold start (Render logs: instance woke and finished booting
+      # gunicorn ~50s after the request that woke it landed) that still ran
+      # long enough to just barely exceed a 130s total retry budget, so this
+      # is widened further with real margin above that observed worst case.
       - name: Call health endpoint
         run: |
           curl --fail --silent --show-error \
-            --max-time 25 \
-            --retry 3 --retry-delay 10 --retry-max-time 180 \
+            --max-time 30 \
+            --retry 4 --retry-delay 10 --retry-max-time 240 \
             "${{ vars.PRODUCTION_BACKEND_URL }}/api/core/health/"

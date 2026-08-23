@@ -11,14 +11,17 @@ name: Backend Health Check
 # *secret*, since it's just the public base URL the frontend already calls.
 
 on:
-  # Every 5, not 10: Render's free tier spins an instance down after ~15
-  # minutes with no incoming traffic, and this ping is the only thing
-  # standing between it and that sleep. A 10-minute cadence leaves almost
-  # no margin for a GitHub Actions scheduled run landing late (GitHub does
-  # not guarantee schedule punctuality — see the note in the "Call health
-  # endpoint" step below for a real instance of this), so a single delayed
-  # run could let the 15-minute window lapse. 5 minutes leaves enough slack
-  # that one late run alone can't cause a spin-down.
+  # Asked for every 5 minutes so this ping stays ahead of Render's ~15-minute
+  # free-tier idle-sleep threshold. In practice GitHub does NOT honor this
+  # reliably: `schedule` triggers are documented as best-effort, and observed
+  # real gaps between runs of this workflow are routinely 20-30 minutes, not
+  # 5 — confirmed by comparing consecutive run timestamps in the Actions tab.
+  # That's a GitHub Actions scheduler limitation, not something fixable from
+  # this file: a tighter cron string doesn't force tighter actual cadence.
+  # Net effect: the backend WILL periodically get a real chance to fully
+  # spin down no matter what's written here, so "Call health endpoint"
+  # below is budgeted to comfortably outlast a cold start when that happens,
+  # rather than trying to prevent the spin-down from ever occurring at all.
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -27,7 +30,7 @@ jobs:
   ping:
     name: Ping /api/core/health/
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - name: Check PRODUCTION_BACKEND_URL is configured
         run: |
@@ -36,20 +39,22 @@ jobs:
             exit 1
           fi
 
-      # --max-time is per-attempt, not the overall budget: Render's free
-      # tier cold-starts a spun-down instance in 30-60+s (see
-      # docs/OPERATIONS.md, "Health checks"). At the old --max-time 10 an
-      # in-progress cold start got cut off before it could ever answer, so
-      # every retry restarted the wait from zero instead of just outlasting
-      # it — the ping (whose whole job is to prevent that sleep) failed
-      # precisely when the instance most needed waking. Confirmed against a
-      # real cold start (Render logs: instance woke and finished booting
-      # gunicorn ~50s after the request that woke it landed) that still ran
-      # long enough to just barely exceed a 130s total retry budget, so this
-      # is widened further with real margin above that observed worst case.
+      # A single isolated failure here is expected background noise from
+      # Render free-tier spin-down + GitHub's scheduler jitter (see the
+      # `schedule:` comment above) — it does not by itself mean the backend
+      # is broken. Only treat this as a real incident if several *consecutive*
+      # scheduled runs fail in a row (check the Actions tab's run history),
+      # which would point at an actual crash/outage instead of a cold start.
+      #
+      # --max-time is per-attempt, not the overall budget. Widened from an
+      # earlier 130s total budget after that one still lost to a real cold
+      # start (Render logs: gunicorn ready ~50s after the waking request
+      # landed, but total request latency — including Render's own wake-up
+      # overhead before the app even starts — still slightly exceeded it).
+      # This budget has real headroom above every cold start observed so far.
       - name: Call health endpoint
         run: |
           curl --fail --silent --show-error \
-            --max-time 30 \
-            --retry 4 --retry-delay 10 --retry-max-time 240 \
+            --max-time 40 \
+            --retry 5 --retry-delay 10 --retry-max-time 300 \
             "${{ vars.PRODUCTION_BACKEND_URL }}/api/core/health/"

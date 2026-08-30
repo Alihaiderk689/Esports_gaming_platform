@@ -155,12 +155,17 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ORIGINS', default=['http://localhost:5173'])
-# The frontend authenticates with a bearer token in the Authorization header,
-# never a cookie — no view relies on a cross-site cookie, so there is nothing
-# for CORS_ALLOW_CREDENTIALS=True to legitimately unlock. Keeping it False
-# means a browser will never attach cookies to a cross-origin request to this
-# API even if one were accidentally set later.
-CORS_ALLOW_CREDENTIALS = False
+# The access token is still a bearer token in the Authorization header, but
+# the refresh token now lives in an httpOnly cookie (core/cookies.py) — the
+# browser needs to actually send/accept that cookie on the login/refresh/
+# logout requests, which requires CORS_ALLOW_CREDENTIALS=True. CORS_ORIGINS
+# stays an explicit allow-list (never CORS_ALLOW_ALL_ORIGINS, which is
+# actually incompatible with credentialed CORS anyway) so this doesn't widen
+# who can receive the cookie. See docs/SECURITY.md's JWT section for the
+# accepted residual risk (a cross-site page can force a token *rotation* via
+# the browser's automatically-attached cookie, but the httpOnly cookie and
+# same-origin policy mean no token is ever exposed to that page).
+CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=['http://localhost:5173'])
 
@@ -168,6 +173,13 @@ CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=['http://localho
 SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=not DEBUG)
 SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=not DEBUG)
 CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE', default=not DEBUG)
+# The refresh-token cookie (core/cookies.py). 'None' is required for a
+# cross-site cookie (production: the Vercel frontend and Render backend are
+# different sites) and mandates Secure; 'Lax' is fine in dev since
+# localhost:5173/localhost:8000 share the same site for SameSite purposes
+# even though they're different CORS origins.
+AUTH_COOKIE_SECURE = env.bool('AUTH_COOKIE_SECURE', default=not DEBUG)
+AUTH_COOKIE_SAMESITE = env('AUTH_COOKIE_SAMESITE', default='None' if not DEBUG else 'Lax')
 SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=0 if DEBUG else 31536000)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=not DEBUG)
 SECURE_HSTS_PRELOAD = env.bool('SECURE_HSTS_PRELOAD', default=not DEBUG)

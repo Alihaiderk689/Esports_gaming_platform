@@ -1533,6 +1533,15 @@ class TeamRosterTests(LifecycleTestBase):
         self.assertIn(self.substitute_player.pk, member_ids)
         self.assertNotIn(self.member2.pk, member_ids)
 
+    def test_substitute_malformed_player_id_returns_400_not_500(self):
+        self.team.is_locked = True
+        self.team.save()
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.post(f'/api/teams/{self.team.pk}/substitute/', {
+            'outgoing_player_id': 'not-an-id', 'incoming_player_id': self.substitute_player.pk, 'reason': 'injury',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_team_history_shows_lock_action(self):
         self.client.force_authenticate(user=self.organizer_user)
         self.client.post(f'/api/teams/{self.team.pk}/lock/')
@@ -1544,6 +1553,36 @@ class TeamRosterTests(LifecycleTestBase):
         self.client.force_authenticate(user=self.other_organizer_user)
         resp = self.client.get(f'/api/teams/{self.team.pk}/history/')
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class TournamentSeedingApiTests(LifecycleTestBase):
+    def setUp(self):
+        super().setUp()
+        self.tournament = self._draft(status=Tournament.Status.APPROVED)
+        self.registration = Registration.objects.create(
+            tournament=self.tournament, player=self.player, checked_in=True,
+        )
+        self.client.force_authenticate(user=self.organizer_user)
+
+    def test_malformed_registration_id_returns_400_not_500(self):
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/seeding/', {
+            'seeds': [{'registration_id': 'not-an-id', 'seed': 1}],
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_malformed_seed_value_returns_400_not_500(self):
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/seeding/', {
+            'seeds': [{'registration_id': self.registration.pk, 'seed': 'not-a-number'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_valid_seed_update_succeeds(self):
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/seeding/', {
+            'seeds': [{'registration_id': self.registration.pk, 'seed': 1}],
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.registration.refresh_from_db()
+        self.assertEqual(self.registration.seed, 1)
 
 
 class RegistrationDisqualifyTests(LifecycleTestBase):

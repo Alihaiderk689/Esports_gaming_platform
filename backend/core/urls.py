@@ -1,5 +1,4 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenRefreshView
 
 from core import views
 
@@ -17,7 +16,7 @@ urlpatterns = [
     path('auth/google-login/', views.GoogleLoginView.as_view()),
     path('auth/logout/', views.LogoutView.as_view()),
     path('auth/logout-all/', views.LogoutAllSessionsView.as_view()),
-    path('auth/token/refresh/', TokenRefreshView.as_view()),
+    path('auth/token/refresh/', views.CookieTokenRefreshView.as_view()),
     path('auth/forgot-password/', views.ForgotPasswordView.as_view()),
     path('auth/reset-password/', views.ResetPasswordView.as_view()),
     path('auth/verify-email/', views.VerifyEmailView.as_view()),

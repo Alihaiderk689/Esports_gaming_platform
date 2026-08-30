@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.audit import log_action
+from core.pagination import StandardResultsPagination
 from organizer.models import Organizer
 from organizer.serializers import (
     AdminOrganizerListSerializer,
@@ -143,6 +144,7 @@ class AdminOrganizerListView(generics.ListAPIView):
     serializer_class = AdminOrganizerListSerializer
     permission_classes = [permissions.IsAdminUser]
     queryset = Organizer.objects.select_related('user').order_by('-created_at')
+    pagination_class = StandardResultsPagination
 
     def get_queryset(self):
         queryset = super().get_queryset()

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClientInstance } from "@/lib/query-client";
@@ -12,50 +13,58 @@ import NotAdminRoute from "@/lib/notadminroute";
 import OrganizerOrAdminRoute from "@/lib/organizerroute";
 import AppLayout from "@/components/layout/applayout";
 import AdminLayout from "@/components/layout/adminlayout";
-import Landing from "@/pages/landing";
-import Auth from "@/pages/auth";
-import GoogleCallback from "@/pages/googlecallback";
-import ForgotPassword from "@/pages/forgotpassword";
-import ResetPassword from "@/pages/resetpassword";
-import VerifyEmail from "@/pages/verifyemail";
-import AccountSettings from "@/pages/accountsettings";
-import AdminOverview from "@/pages/adminoverview";
-import AdminUsers from "@/pages/adminusers";
-import AdminOrganizers from "@/pages/adminorganizers";
-import AdminTournaments from "@/pages/admintournaments";
-import AdminReviewRequests from "@/pages/adminreviewrequests";
-import AdminDisputes from "@/pages/admindisputes";
-import AdminGames from "@/pages/admingames";
-import AdminPartners from "@/pages/adminpartners";
-import AdminRulebooks from "@/pages/adminrulebooks";
-import AdminSettings from "@/pages/adminsettings";
-import Players from "@/pages/players";
-import PlayerDetail from "@/pages/playerdetail";
-import Tournaments from "@/pages/tournaments";
-import TournamentDetail from "@/pages/tournamentdetail";
-import BracketPage from "@/pages/bracketpage";
-import CreateTournament from "@/pages/createtournament";
-import CreateHub from "@/pages/createhub";
-import MyTournaments from "@/pages/mytournaments";
-import EditTournament from "@/pages/edittournament";
-import Organizer from "@/pages/organizer";
-import Games from "@/pages/games";
-import GameDetail from "@/pages/gamedetail";
-import About from "@/pages/about";
-import Dashboard from "@/pages/dashboard";
+
+// Route-level code splitting — each page is only fetched when its route is
+// actually visited, instead of every page's code (and its dependencies —
+// recharts, react-quill, jspdf, ...) being bundled into the single chunk
+// loaded on first visit to any route, including /login.
+const Landing = lazy(() => import("@/pages/landing"));
+const Auth = lazy(() => import("@/pages/auth"));
+const GoogleCallback = lazy(() => import("@/pages/googlecallback"));
+const ForgotPassword = lazy(() => import("@/pages/forgotpassword"));
+const ResetPassword = lazy(() => import("@/pages/resetpassword"));
+const VerifyEmail = lazy(() => import("@/pages/verifyemail"));
+const AccountSettings = lazy(() => import("@/pages/accountsettings"));
+const AdminOverview = lazy(() => import("@/pages/adminoverview"));
+const AdminUsers = lazy(() => import("@/pages/adminusers"));
+const AdminOrganizers = lazy(() => import("@/pages/adminorganizers"));
+const AdminTournaments = lazy(() => import("@/pages/admintournaments"));
+const AdminReviewRequests = lazy(() => import("@/pages/adminreviewrequests"));
+const AdminDisputes = lazy(() => import("@/pages/admindisputes"));
+const AdminGames = lazy(() => import("@/pages/admingames"));
+const AdminPartners = lazy(() => import("@/pages/adminpartners"));
+const AdminRulebooks = lazy(() => import("@/pages/adminrulebooks"));
+const AdminSettings = lazy(() => import("@/pages/adminsettings"));
+const Players = lazy(() => import("@/pages/players"));
+const PlayerDetail = lazy(() => import("@/pages/playerdetail"));
+const Tournaments = lazy(() => import("@/pages/tournaments"));
+const TournamentDetail = lazy(() => import("@/pages/tournamentdetail"));
+const BracketPage = lazy(() => import("@/pages/bracketpage"));
+const CreateTournament = lazy(() => import("@/pages/createtournament"));
+const CreateHub = lazy(() => import("@/pages/createhub"));
+const MyTournaments = lazy(() => import("@/pages/mytournaments"));
+const EditTournament = lazy(() => import("@/pages/edittournament"));
+const Organizer = lazy(() => import("@/pages/organizer"));
+const Games = lazy(() => import("@/pages/games"));
+const GameDetail = lazy(() => import("@/pages/gamedetail"));
+const About = lazy(() => import("@/pages/about"));
+const Dashboard = lazy(() => import("@/pages/dashboard"));
+
+const RouteFallback = () => (
+  <div className="fixed inset-0 flex items-center justify-center">
+    <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+  </div>
+);
 
 const AuthenticatedApp = () => {
   const { loading } = useAuth();
 
   if (loading) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
-      </div>
-    );
+    return <RouteFallback />;
   }
 
   return (
+    <Suspense fallback={<RouteFallback />}>
     <Routes>
       <Route element={<GuestRoute />}>
         <Route path="/login" element={<Auth />} />
@@ -109,6 +118,7 @@ const AuthenticatedApp = () => {
       </Route>
       <Route path="*" element={<PageNotFound />} />
     </Routes>
+    </Suspense>
   );
 };
 

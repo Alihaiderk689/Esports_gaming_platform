@@ -3,37 +3,38 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-const TOKEN_KEY = "esp_token";
-const REFRESH_KEY = "esp_refresh";
+// The access token lives in memory only (never localStorage/sessionStorage)
+// so an XSS payload can't read it off disk — it's gone on a full page
+// reload, recovered via a silent refresh() call below against the httpOnly
+// refresh-token cookie the backend sets on login (core/cookies.py). The
+// refresh token itself is never readable from JS at all.
+let accessToken = null;
 
 export const tokenStorage = {
-  get: () => localStorage.getItem(TOKEN_KEY),
-  getRefresh: () => localStorage.getItem(REFRESH_KEY),
-  set: (access, refresh) => {
-    if (access) localStorage.setItem(TOKEN_KEY, access);
-    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+  get: () => accessToken,
+  set: (access) => {
+    if (access) accessToken = access;
   },
   clear: () => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_KEY);
+    accessToken = null;
   },
 };
 
-async function refreshToken() {
-  const refresh = tokenStorage.getRefresh();
-  if (!refresh) return false;
+// Exported so appauth.jsx can call it directly on mount to silently
+// re-establish an access token from the httpOnly cookie (the in-memory
+// token above doesn't survive a page reload).
+export async function refreshToken() {
   try {
     const res = await fetch(`${API_BASE_URL}/api/auth/token/refresh/`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh }),
+      credentials: "include",
     });
     if (!res.ok) {
       tokenStorage.clear();
       return false;
     }
     const data = await res.json();
-    tokenStorage.set(data.access || data.access_token, data.refresh || refresh);
+    tokenStorage.set(data.access || data.access_token);
     return true;
   } catch {
     tokenStorage.clear();
@@ -86,9 +87,9 @@ async function safeFetch(url, options) {
 
 /**
  * @param {string} path
- * @param {{method?: string, body?: any, auth?: boolean, formData?: boolean, query?: Record<string, any>}} [options]
+ * @param {{method?: string, body?: any, auth?: boolean, formData?: boolean, query?: Record<string, any>, withCredentials?: boolean}} [options]
  */
-async function request(path, { method = "GET", body, auth = true, formData, query } = {}) {
+async function request(path, { method = "GET", body, auth = true, formData, query, withCredentials = false } = {}) {
   const url = new URL(API_BASE_URL + path);
   if (query) {
     Object.entries(query).forEach(([k, v]) => {
@@ -101,14 +102,22 @@ async function request(path, { method = "GET", body, auth = true, formData, quer
   if (body && !formData) headers["Content-Type"] = "application/json";
 
   const buildBody = () => (body ? (formData ? body : JSON.stringify(body)) : undefined);
+  const fetchOpts = { method, headers, body: buildBody() };
+  // Only the auth endpoints that touch the httpOnly refresh cookie
+  // (login/register/google-login/logout) need this — everything else stays
+  // credentials-free, matching the existing least-privilege CORS posture.
+  if (withCredentials) fetchOpts.credentials = "include";
 
-  let res = await safeFetch(url, { method, headers, body: buildBody() });
+  let res = await safeFetch(url, fetchOpts);
 
-  if (res.status === 401 && auth && tokenStorage.getRefresh()) {
+  if (res.status === 401 && auth) {
+    // There's no client-readable refresh token to check anymore (it's in an
+    // httpOnly cookie) — just attempt the refresh and let the response say
+    // whether it worked.
     const ok = await refreshToken();
     if (ok) {
       headers.Authorization = `Bearer ${tokenStorage.get()}`;
-      res = await safeFetch(url, { method, headers, body: buildBody() });
+      res = await safeFetch(url, fetchOpts);
     }
   }
   return handleResponse(res);
@@ -132,7 +141,7 @@ async function requestBlob(path, { query } = {}) {
   if (tokenStorage.get()) headers.Authorization = `Bearer ${tokenStorage.get()}`;
 
   let res = await safeFetch(url, { method: "GET", headers });
-  if (res.status === 401 && tokenStorage.getRefresh()) {
+  if (res.status === 401) {
     const ok = await refreshToken();
     if (ok) {
       headers.Authorization = `Bearer ${tokenStorage.get()}`;

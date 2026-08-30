@@ -695,6 +695,61 @@ class GoogleLoginApiTests(APITestCase):
         self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
 
 
+class RefreshCookieApiTests(APITestCase):
+    """The refresh-token httpOnly cookie migration (docs/SECURITY.md's JWT
+    section): login/Google-login set it, refresh reads/rotates it, logout
+    blacklists and clears it — the response body never carries a refresh
+    token. django.test.Client persists Set-Cookie across requests within one
+    test, same as a real browser, so these exercise the full round trip."""
+
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(email='cookie-user@example.com', password='StrongPass123!')
+
+    def test_login_sets_httponly_refresh_cookie_and_omits_it_from_body(self):
+        resp = self.client.post('/api/auth/login/', {'email': self.user.email, 'password': 'StrongPass123!'})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertNotIn('refresh', resp.data)
+        self.assertIn('access', resp.data)
+        cookie = resp.cookies['esp_refresh']
+        self.assertTrue(cookie['httponly'])
+        self.assertTrue(cookie.value)
+
+    @patch('core.views.google_id_token.verify_oauth2_token')
+    def test_google_login_sets_refresh_cookie_and_omits_it_from_body(self, mock_verify):
+        start = self.client.get('/api/auth/google/start/')
+        mock_verify.return_value = {
+            'email': 'cookie-google@example.com', 'email_verified': True, 'sub': 'google-sub-cookie',
+            'given_name': 'Coo', 'family_name': 'Kie', 'nonce': start.data['nonce'],
+        }
+        resp = self.client.post('/api/auth/google-login/', {'id_token': 'fake-token', 'state': start.data['state']})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertNotIn('refresh', resp.data)
+        self.assertIn('esp_refresh', resp.cookies)
+
+    def test_refresh_with_cookie_rotates_it(self):
+        self.client.post('/api/auth/login/', {'email': self.user.email, 'password': 'StrongPass123!'})
+        resp = self.client.post('/api/auth/token/refresh/')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertNotIn('refresh', resp.data)
+        self.assertIn('access', resp.data)
+        self.assertIn('esp_refresh', resp.cookies)
+
+    def test_refresh_without_cookie_returns_clean_401(self):
+        resp = self.client.post('/api/auth/token/refresh/')
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_logout_blacklists_cookie_token_and_clears_cookie(self):
+        self.client.post('/api/auth/login/', {'email': self.user.email, 'password': 'StrongPass123!'})
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.post('/api/auth/logout/')
+        self.assertEqual(resp.status_code, status.HTTP_205_RESET_CONTENT)
+        self.assertEqual(resp.cookies['esp_refresh'].value, '')
+        # The blacklisted token can no longer be used to refresh.
+        refresh_resp = self.client.post('/api/auth/token/refresh/')
+        self.assertEqual(refresh_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
 class SessionRevocationApiTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(email='revoke@example.com', password='StrongPass123!')
@@ -1169,8 +1224,15 @@ class SecuritySettingsInvariantTests(TestCase):
     def test_cors_does_not_allow_all_origins(self):
         self.assertFalse(getattr(settings, 'CORS_ALLOW_ALL_ORIGINS', False))
 
-    def test_cors_does_not_allow_credentials(self):
-        self.assertFalse(settings.CORS_ALLOW_CREDENTIALS)
+    def test_cors_allows_credentials_for_the_refresh_cookie(self):
+        # Deliberately True (not the old deliberately-False default) since
+        # the refresh token migration (docs/SECURITY.md's JWT section) moved
+        # the refresh token into an httpOnly cookie — the browser needs
+        # CORS_ALLOW_CREDENTIALS=True to send/accept it on login/refresh/
+        # logout. CORS_ORIGINS stays an explicit allow-list regardless (see
+        # test_cors_does_not_allow_all_origins), so this doesn't widen who
+        # can receive the cookie.
+        self.assertTrue(settings.CORS_ALLOW_CREDENTIALS)
 
     def test_jwt_algorithm_is_pinned_to_hs256(self):
         self.assertEqual(settings.SIMPLE_JWT['ALGORITHM'], 'HS256')

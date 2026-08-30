@@ -1187,7 +1187,11 @@ def generate_group_playoff_bracket(tournament, num_groups=None):
     n = len(players)
     if num_groups is None:
         num_groups = max(2, round(n / 4)) if n else 2
-    num_groups = max(2, int(num_groups))
+    else:
+        try:
+            num_groups = max(2, int(num_groups))
+        except (TypeError, ValueError):
+            raise ValidationError({'num_groups': 'Must be a whole number.'})
     if num_groups > 26:
         # Labels are single letters A-Z; past that `chr(ord('A') + i)` starts emitting
         # punctuation rather than group names.

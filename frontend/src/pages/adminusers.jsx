@@ -86,24 +86,31 @@ export default function AdminUsers() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [hasNext, setHasNext] = useState(false);
+  const [hasPrevious, setHasPrevious] = useState(false);
   const [error, setError] = useState("");
   const [savingId, setSavingId] = useState(null);
   const [detailUser, setDetailUser] = useState(null);
 
-  const load = (q) => {
+  const load = (q, p) => {
     setLoading(true);
     api
-      .get("/api/admin/users/", { query: { search: q } })
-      .then(setUsers)
+      .get("/api/admin/users/", { query: { search: q, page: p } })
+      .then((data) => {
+        const results = Array.isArray(data) ? data : data.results;
+        setUsers(results);
+        setHasNext(Boolean(data && !Array.isArray(data) && data.next));
+        setHasPrevious(Boolean(data && !Array.isArray(data) && data.previous));
+      })
       .catch((e) => setError(e.message || "Failed to load users."))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
-    const t = setTimeout(() => load(search), 300);
+    const t = setTimeout(() => load(search, page), 300);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [search, page]);
 
   const toggle = async (u, field) => {
     setSavingId(u.id);
@@ -125,7 +132,7 @@ export default function AdminUsers() {
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           placeholder="Search by email or name…"
           className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-muted/40 border border-border text-sm outline-none focus:border-primary focus:neon-border transition-all placeholder:text-muted-foreground/70"
         />
@@ -199,6 +206,26 @@ export default function AdminUsers() {
           </tbody>
         </table>
       </div>
+
+      {!loading && (hasNext || hasPrevious) && (
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={!hasPrevious}
+            className="px-3 py-1.5 rounded-lg text-sm font-heading font-semibold bg-muted/40 border border-border/60 disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-muted-foreground">Page {page}</span>
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={!hasNext}
+            className="px-3 py-1.5 rounded-lg text-sm font-heading font-semibold bg-muted/40 border border-border/60 disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      )}
 
       <UserDetailDialog
         user={detailUser}

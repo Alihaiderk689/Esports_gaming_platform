@@ -47,7 +47,6 @@ export default function Players() {
     }
     const t = setTimeout(() => load("all", search), 300);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, search]);
 
   const toggleFollow = async (p) => {

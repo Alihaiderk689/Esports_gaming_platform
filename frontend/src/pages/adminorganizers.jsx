@@ -119,6 +119,9 @@ function OrganizerDetailDialog({ org, onClose, onPreview, onDecide, saving, reje
 export default function AdminOrganizers() {
   const [organizers, setOrganizers] = useState([]);
   const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1);
+  const [hasNext, setHasNext] = useState(false);
+  const [hasPrevious, setHasPrevious] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingId, setSavingId] = useState(null);
@@ -127,16 +130,21 @@ export default function AdminOrganizers() {
   const [previewDoc, setPreviewDoc] = useState(null);
   const [detailOrg, setDetailOrg] = useState(null);
 
-  const load = (s) => {
+  const load = (s, p) => {
     setLoading(true);
     api
-      .get("/api/admin/organizers/", { query: { status: s } })
-      .then(setOrganizers)
+      .get("/api/admin/organizers/", { query: { status: s, page: p } })
+      .then((data) => {
+        const results = Array.isArray(data) ? data : data.results;
+        setOrganizers(results);
+        setHasNext(Boolean(data && !Array.isArray(data) && data.next));
+        setHasPrevious(Boolean(data && !Array.isArray(data) && data.previous));
+      })
       .catch((e) => setError(e.message || "Failed to load organizers."))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => load(status), [status]);
+  useEffect(() => load(status, page), [status, page]);
 
   const decide = async (org, newStatus, rejectionReason) => {
     setSavingId(org.id);
@@ -162,7 +170,7 @@ export default function AdminOrganizers() {
         {STATUSES.map((s) => (
           <button
             key={s.value}
-            onClick={() => setStatus(s.value)}
+            onClick={() => { setStatus(s.value); setPage(1); }}
             className={`px-3.5 py-1.5 rounded-lg text-sm font-heading font-semibold transition-colors ${
               status === s.value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
@@ -266,6 +274,26 @@ export default function AdminOrganizers() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {!loading && (hasNext || hasPrevious) && (
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={!hasPrevious}
+            className="px-3 py-1.5 rounded-lg text-sm font-heading font-semibold bg-muted/40 border border-border/60 disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-muted-foreground">Page {page}</span>
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={!hasNext}
+            className="px-3 py-1.5 rounded-lg text-sm font-heading font-semibold bg-muted/40 border border-border/60 disabled:opacity-40"
+          >
+            Next
+          </button>
         </div>
       )}
 

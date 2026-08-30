@@ -10,6 +10,17 @@ Backend: Django 4.2 + DRF, PostgreSQL, JWT auth (`djangorestframework-simplejwt`
 Frontend: React + Vite, React Router, Tailwind CSS, shadcn/ui ("new-york" style), Framer Motion.
 RAG assistant: PyMuPDF (PDF extraction), `sentence-transformers` (embeddings), ChromaDB Cloud (vector store), Groq (LLM inference).
 
+## Feature memory (`.claude/memory/`) — read this before touching a feature
+
+This repo keeps a per-feature memory system at [`.claude/memory/`](.claude/memory/), separate from `docs/`. The `docs/*.md` files (below) explain *why* the system is shaped the way it is, organized by concern (architecture, security, edge cases). `.claude/memory/` is organized by *feature* instead — one file per feature gathering the quick-orientation facts and a running change log, so a session can get oriented on "how does tournaments/brackets/auth/rag-chat actually work right now" without re-reading all five `docs/` files every time.
+
+**Convention — follow this on every task that touches a specific feature:**
+
+1. **Before working on or updating a feature** (the user says "look at X" / "update X" / asks to fix or extend some part of the app), first read [`.claude/memory/INDEX.md`](.claude/memory/INDEX.md) to find the right feature file (it also maps file paths → feature), then read that feature's `.claude/memory/<feature>.md` file before reading the code itself. It tells you the key files, data flow, and non-obvious invariants/gotchas for that area, and often saves re-discovering something already documented in `docs/EDGE_CASES.md`/`docs/SECURITY.md`.
+2. **After modifying any file that belongs to a feature** (per the path mapping in `INDEX.md`), update that feature's memory file in the same piece of work: reflect what actually changed (new files, changed behavior, new invariants, new gotchas), and append a dated entry to its `## Change log` section — don't just describe the diff, note anything a future session would need to know that isn't obvious from the code alone (why, not just what, when that's non-obvious).
+3. If a change spans multiple features, update every `.claude/memory/<feature>.md` file it materially affects, not just one.
+4. If a change is significant enough to also affect the *architectural* claims in `docs/ARCHITECTURE.md`/`docs/SECURITY.md`/`docs/EDGE_CASES.md`/`docs/ERROR_HANDLING.md`/`docs/OPERATIONS.md`, update those too — `.claude/memory/` is a fast-orientation layer, not a replacement for the deeper docs those files hold.
+
 ## Further documentation
 
 This file covers day-to-day rules and gotchas. For the details behind them:
@@ -20,6 +31,7 @@ This file covers day-to-day rules and gotchas. For the details behind them:
 - **[`docs/EDGE_CASES.md`](docs/EDGE_CASES.md)** — real edge cases across auth/OTP, Google OAuth, tournament lifecycle, registration/team concurrency, the bracket engine, admin/disputes, email, the RAG chatbot, and deployment — what's already handled vs. still a known gap. Skim before touching any of those areas so you're not rediscovering a race condition or state-machine gap that's already been found and fixed once.
 - **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)** — how this project actually runs and how to diagnose it when something breaks: the deploy pipeline, migration/boot behavior, health checks, Render/Vercel/GitHub Actions gotchas, and every external-service failure mode (Brevo, Google OAuth, Groq/Chroma/RAG, Cloudinary), each with real symptoms and where to look. Read this first when something is broken in production, before digging through code.
 - **[`docs/ERROR_HANDLING.md`](docs/ERROR_HANDLING.md)** — an audit of how exceptions actually propagate: the DRF exception-handler chain, API error response shapes, which failures are logged vs. silent, and where a partial failure can leave inconsistent state. Read this before adding a new external-service integration or wondering why an error response looks different from another endpoint's.
+- **[`docs/SCALABILITY.md`](docs/SCALABILITY.md)** — what actually limits how much load this system can take today (single Render instance/worker, no background job queue, caching only wired up for throttle counters, the bracket engine's per-tournament lock serialization) and what to change first if load grows. Read this before proposing to scale workers/instances, add caching, or add a task queue.
 
 ## Commands
 

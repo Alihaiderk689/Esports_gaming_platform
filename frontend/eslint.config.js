@@ -9,9 +9,10 @@ export default [
     files: [
       "src/components/**/*.{js,mjs,cjs,jsx}",
       "src/pages/**/*.{js,mjs,cjs,jsx}",
+      "src/lib/**/*.{js,mjs,cjs,jsx}",
       "src/Layout.jsx",
     ],
-    ignores: ["src/lib/**/*", "src/components/ui/**/*"],
+    ignores: ["src/components/ui/**/*"],
     ...pluginJs.configs.recommended,
     ...pluginReact.configs.flat.recommended,
     languageOptions: {
@@ -55,6 +56,11 @@ export default [
         { ignore: ["cmdk-input-wrapper", "toast-close"] },
       ],
       "react-hooks/rules-of-hooks": "error",
+      // "warn" (not "error") deliberately: src/lib was never linted against
+      // this rule before, and npm run lint's `--quiet` flag means a warning
+      // doesn't fail the command — the plugin is now properly active without
+      // turning pre-existing, unreviewed findings into a blocking wall.
+      "react-hooks/exhaustive-deps": "warn",
     },
   },
 ];

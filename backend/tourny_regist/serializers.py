@@ -99,6 +99,7 @@ class TournamentListSerializer(serializers.ModelSerializer):
     teams = serializers.SerializerMethodField()
     phase = serializers.SerializerMethodField()
     cover_image_url = serializers.SerializerMethodField()
+    registration_currently_open = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Tournament
@@ -106,7 +107,8 @@ class TournamentListSerializer(serializers.ModelSerializer):
             'id', 'title', 'game', 'game_slug', 'organizer', 'start_date', 'end_date', 'teams', 'phase',
             'status', 'rejection_reason', 'is_published', 'mode', 'bracket_format', 'team_size',
             'registration_fee', 'prize_pool', 'registration_deadline', 'check_in_start', 'check_in_end',
-            'max_participants', 'min_participants', 'is_registration_open', 'game_version', 'server_region',
+            'max_participants', 'min_participants', 'is_registration_open', 'registration_currently_open',
+            'game_version', 'server_region',
             'cancellation_reason', 'cancelled_at',
             'venue_name', 'venue_city', 'venue_country', 'platform', 'cover_image_url',
         ]
@@ -124,6 +126,8 @@ class TournamentListSerializer(serializers.ModelSerializer):
     def get_phase(self, obj):
         if obj.starts_at is None:
             return None
+        if obj.has_ended:
+            return 'completed'
         return 'live' if obj.starts_at <= timezone.now() else 'upcoming'
 
     def get_cover_image_url(self, obj):
@@ -455,6 +459,11 @@ class TeamCreateSerializer(serializers.ModelSerializer):
         model = Team
         fields = ['name']
 
+    def validate_name(self, value):
+        if len(value.split()) > 10:
+            raise serializers.ValidationError('Team name cannot be more than 10 words.')
+        return value
+
 
 class TeamJoinSerializer(serializers.Serializer):
     invite_code = serializers.CharField()
@@ -538,10 +547,8 @@ class RegistrationCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 'This tournament requires team registration — join or create a team first.',
             )
-        if not tournament.is_registration_open:
+        if not tournament.registration_currently_open:
             raise serializers.ValidationError('Registration is closed for this tournament.')
-        if tournament.registration_deadline and timezone.now() > tournament.registration_deadline:
-            raise serializers.ValidationError('The registration deadline for this tournament has passed.')
         if tournament.max_participants is not None:
             if tournament.registrations.count() >= tournament.max_participants:
                 raise serializers.ValidationError('This tournament has reached its participant limit.')

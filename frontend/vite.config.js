@@ -10,6 +10,9 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  server: {
+    port: 5174,
+  },
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.js',

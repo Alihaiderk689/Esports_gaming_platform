@@ -225,7 +225,7 @@ export default function Landing() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6">
           <SectionHeader eyebrow="Tournaments" title="Upcoming & Live" icon={Trophy} />
           <div className="space-y-3">
-            {tournaments.map((t, i) => {
+            {tournaments.filter((t) => t.phase !== "completed").map((t, i) => {
               const live = (t.phase || "").toLowerCase() === "live";
               return (
                 <motion.div
@@ -334,7 +334,6 @@ export default function Landing() {
             <Logo className="h-6 w-auto" />
             ESPORTS <span className="gradient-text">PAKISTAN</span>
           </div>
-          <Link to="/about" className="hover:text-primary transition-colors">About</Link>
           <div>© 2026 Esports Pakistan. All rights reserved.</div>
         </div>
       </footer>

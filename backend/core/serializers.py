@@ -196,14 +196,26 @@ class PlayerSerializer(serializers.ModelSerializer):
     followers_count = serializers.IntegerField(read_only=True)
     following_count = serializers.IntegerField(read_only=True)
     is_following = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'date_joined',
-            'followers_count', 'following_count', 'is_following',
+            'followers_count', 'following_count', 'is_following', 'role',
         ]
         read_only_fields = fields
+
+    def get_role(self, obj):
+        if obj.is_staff:
+            return 'admin'
+        # getattr(default=None) works on a missing reverse OneToOne here because
+        # Django's RelatedObjectDoesNotExist subclasses AttributeError for exactly
+        # this reason — no try/except needed.
+        profile = getattr(obj, 'organizer_profile', None)
+        if profile is not None and profile.status == Organizer.Status.APPROVED:
+            return 'organizer'
+        return 'player'
 
     def get_is_following(self, obj):
         # _players_queryset(viewer=...) annotates this when the view passes the
@@ -218,6 +230,60 @@ class PlayerSerializer(serializers.ModelSerializer):
         if not request or not request.user.is_authenticated or request.user.pk == obj.pk:
             return False
         return Follow.objects.filter(follower=request.user, following=obj).exists()
+
+
+class PlayerDetailSerializer(PlayerSerializer):
+    """Single-profile view only (PlayerDetailView's GET) — adds two extra
+    queries' worth of tournament-history signal that would be an N+1 problem
+    if it ran per-row on the list/search endpoints, so PlayerListView/
+    PlayerTopView/PlayerFollowingView/PlayerMeView deliberately keep using
+    the lighter PlayerSerializer instead."""
+    tournaments_played = serializers.SerializerMethodField()
+    recent_game = serializers.SerializerMethodField()
+
+    class Meta(PlayerSerializer.Meta):
+        fields = PlayerSerializer.Meta.fields + ['tournaments_played', 'recent_game']
+        read_only_fields = fields
+
+    # Local imports, not module-level — core doesn't otherwise depend on
+    # tourny_regist (it depends on core, not the reverse); mirrors the same
+    # convention already used in this file (see DisputeSerializer._is_tournament_target)
+    # and in core/views.py.
+    def get_tournaments_played(self, obj):
+        from tourny_regist.models import Registration, Team
+
+        # A Registration row only exists for an individual entrant or a team
+        # captain (TeamRegisterView creates it for whoever calls it, and only
+        # the captain can) — a rank-and-file team member never gets one, so
+        # counting Registration alone would undercount real teammates. Credit
+        # them too via TeamMembership on a team that actually got registered.
+        individual_ids = set(Registration.objects.filter(
+            player=obj, status=Registration.Status.APPROVED,
+        ).values_list('tournament_id', flat=True))
+        team_ids = set(Team.objects.filter(
+            members__player=obj, registration__isnull=False,
+        ).values_list('tournament_id', flat=True))
+        return len(individual_ids | team_ids)
+
+    def get_recent_game(self, obj):
+        from tourny_regist.models import Registration
+
+        # Only a personal Registration row carries gaming_username/platform —
+        # a team member with no Registration of their own legitimately has no
+        # recorded answer here, so this returns None rather than guessing.
+        reg = (
+            Registration.objects.filter(player=obj)
+            .select_related('tournament__game')
+            .order_by('-registered_at')
+            .first()
+        )
+        if reg is None:
+            return None
+        return {
+            'game': reg.tournament.game.name,
+            'platform': reg.platform or None,
+            'gaming_username': reg.gaming_username or None,
+        }
 
 
 class PlayerUpdateSerializer(NameValidationMixin, serializers.ModelSerializer):

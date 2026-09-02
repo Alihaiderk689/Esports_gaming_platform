@@ -15,7 +15,7 @@ export default function GuestRoute() {
   }
 
   if (user) {
-    return <Navigate to={user.is_staff ? "/admin" : "/dashboard"} replace />;
+    return <Navigate to={user.is_staff ? "/admin" : "/"} replace />;
   }
 
   return <Outlet />;

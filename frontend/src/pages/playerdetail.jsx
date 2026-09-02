@@ -3,10 +3,9 @@ import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, UserPlus, UserMinus, Loader2, Calendar } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
-
-function displayName(p) {
-  return [p.first_name, p.last_name].filter(Boolean).join(" ") || p.email;
-}
+import { displayName } from "@/lib/playerDisplay";
+import RoleBadge from "@/components/players/rolebadge";
+import { toast } from "@/components/ui/use-toast";
 
 export default function PlayerDetail() {
   const { id } = useParams();
@@ -28,7 +27,6 @@ export default function PlayerDetail() {
 
   const toggleFollow = async () => {
     setSaving(true);
-    setError("");
     try {
       if (player.is_following) {
         await api.delete(`/api/players/${id}/follow/`);
@@ -38,7 +36,11 @@ export default function PlayerDetail() {
         setPlayer((p) => ({ ...p, is_following: true, followers_count: p.followers_count + 1 }));
       }
     } catch (e) {
-      setError(e.message || "Could not update follow status.");
+      toast({
+        variant: "destructive",
+        title: "Could not update follow status",
+        description: e.message || "Please try again.",
+      });
     } finally {
       setSaving(false);
     }
@@ -75,7 +77,10 @@ export default function PlayerDetail() {
               {displayName(player).charAt(0).toUpperCase()}
             </div>
             <div>
-              <h1 className="font-display font-extrabold text-2xl">{displayName(player)}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="font-display font-extrabold text-2xl">{displayName(player)}</h1>
+                <RoleBadge role={player.role} />
+              </div>
               <p className="text-sm text-muted-foreground">{player.email}</p>
             </div>
           </div>
@@ -94,13 +99,7 @@ export default function PlayerDetail() {
           )}
         </div>
 
-        {error && (
-          <div className="mt-4 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
-            {error}
-          </div>
-        )}
-
-        <div className="mt-6 flex items-center gap-6 text-sm">
+        <div className="mt-6 flex items-center gap-6 text-sm flex-wrap">
           <div>
             <span className="font-display font-bold text-lg">{player.followers_count}</span>{" "}
             <span className="text-muted-foreground">Followers</span>
@@ -109,11 +108,25 @@ export default function PlayerDetail() {
             <span className="font-display font-bold text-lg">{player.following_count}</span>{" "}
             <span className="text-muted-foreground">Following</span>
           </div>
+          {player.tournaments_played != null && (
+            <div>
+              <span className="font-display font-bold text-lg">{player.tournaments_played}</span>{" "}
+              <span className="text-muted-foreground">Tournaments Played</span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5 text-muted-foreground">
             <Calendar className="w-3.5 h-3.5" />
             Joined {new Date(player.date_joined).toLocaleDateString()}
           </div>
         </div>
+
+        {player.recent_game && (
+          <p className="mt-3 text-sm text-muted-foreground">
+            Recently played: <span className="text-foreground font-medium">{player.recent_game.game}</span>
+            {player.recent_game.platform && ` · ${player.recent_game.platform}`}
+            {player.recent_game.gaming_username && ` · IGN: ${player.recent_game.gaming_username}`}
+          </p>
+        )}
       </div>
     </div>
   );

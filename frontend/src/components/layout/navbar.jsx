@@ -3,8 +3,10 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/appauth";
 import { api } from "@/lib/api";
-import { Menu, X, ChevronDown, LogOut, User as UserIcon, Trophy, LayoutGrid, Plus, ClipboardList, MessageSquare, Settings, ShieldCheck, Building2, Home, Info } from "lucide-react";
+import { Menu, X, ChevronDown, LogOut, User as UserIcon, Trophy, LayoutGrid, Plus, ClipboardList, MessageSquare, Search, Settings, ShieldCheck, Building2, Home, Info } from "lucide-react";
 import Logo from "@/components/Logo";
+import RoleBadge from "@/components/players/rolebadge";
+import GlobalSearch from "./globalsearch";
 
 const PLAYER_NAV = [
   { label: "Home", to: "/", icon: Home, end: true },
@@ -28,6 +30,7 @@ export default function Navbar({ onToggleChat }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
   const [isOrganizer, setIsOrganizer] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -94,6 +97,15 @@ export default function Navbar({ onToggleChat }) {
 
           {/* Right actions */}
           <div className="flex items-center gap-2">
+            {user && !user.is_staff && (
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="grid place-items-center w-9 h-9 rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition-colors"
+                title="Search players and organizers"
+              >
+                <Search className="w-5 h-5" />
+              </button>
+            )}
             {!user?.is_staff && (
               <button
                 onClick={onToggleChat}
@@ -129,9 +141,10 @@ export default function Navbar({ onToggleChat }) {
                           {[user.first_name, user.last_name].filter(Boolean).join(" ") || user.email}
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{user.email}</div>
-                        <span className="inline-block mt-1 text-[10px] font-heading font-bold uppercase tracking-wider text-primary">
-                          {user.is_staff ? "Admin" : isOrganizer ? "Organizer" : "Player"}
-                        </span>
+                        <RoleBadge
+                          role={user.is_staff ? "admin" : isOrganizer ? "organizer" : "player"}
+                          className="mt-1"
+                        />
                       </div>
                       {user.is_staff ? (
                         <>
@@ -203,6 +216,8 @@ export default function Navbar({ onToggleChat }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {user && !user.is_staff && <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />}
     </header>
   );
 }

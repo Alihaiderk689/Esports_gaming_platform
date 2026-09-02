@@ -2,12 +2,14 @@ import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Sparkles, Bot } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 
 // The assistant's answers come back as markdown (headings, bold, numbered/
-// bulleted lists) — these overrides keep that structure but at chat-bubble
-// scale (default react-markdown element spacing is sized for full-page prose,
-// not a 78%-width bubble).
+// bulleted lists, and occasionally GFM tables via remarkGfm) — these
+// overrides keep that structure but at chat-bubble scale (default
+// react-markdown element spacing is sized for full-page prose, not a
+// 78%-width bubble).
 const markdownComponents = {
   p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
@@ -22,7 +24,26 @@ const markdownComponents = {
       {children}
     </a>
   ),
+  table: ({ children }) => (
+    <div className="mb-2 last:mb-0 overflow-x-auto rounded-md border border-border/60">
+      <table className="w-full text-xs">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-background/40">{children}</thead>,
+  tr: ({ children }) => <tr className="border-b border-border/60 last:border-0">{children}</tr>,
+  th: ({ children }) => <th className="px-2 py-1.5 text-left font-heading font-semibold">{children}</th>,
+  td: ({ children }) => <td className="px-2 py-1.5 align-top">{children}</td>,
 };
+
+// The model sometimes packs multiple points into one table cell using literal
+// "<br>" tags (GFM table cells can't contain real newlines) - react-markdown
+// intentionally doesn't render raw HTML (rendering it unsanitized would be an
+// XSS risk for LLM-sourced text), so left alone it shows up as literal "<br>"
+// text. Swap it for a plain-text separator instead of reaching for
+// rehype-raw, which would need a sanitizer to stay safe.
+function normalizeAssistantMarkdown(content) {
+  return content.replace(/<br\s*\/?>/gi, " · ");
+}
 
 export default function ChatbotPanel({ open, onClose }) {
   const [messages, setMessages] = useState([
@@ -34,10 +55,18 @@ export default function ChatbotPanel({ open, onClose }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef(null);
+  const lastMessageRef = useRef(null);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const container = scrollRef.current;
+    const lastMessage = lastMessageRef.current;
+    if (!container) return;
+    if (lastMessage && lastMessage.offsetHeight > container.clientHeight) {
+      // A reply longer than the visible area would otherwise land the user
+      // on its last line — scroll to its start so they read it top-down.
+      lastMessage.scrollIntoView({ block: "start" });
+    } else {
+      container.scrollTop = container.scrollHeight;
     }
   }, [messages, sending]);
 
@@ -107,6 +136,7 @@ export default function ChatbotPanel({ open, onClose }) {
               {messages.map((m, i) => (
                 <motion.div
                   key={i}
+                  ref={i === messages.length - 1 ? lastMessageRef : null}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className={`flex gap-2.5 ${m.role === "user" ? "flex-row-reverse" : ""}`}
@@ -124,7 +154,9 @@ export default function ChatbotPanel({ open, onClose }) {
                     }`}
                   >
                     {m.role === "assistant" ? (
-                      <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                        {normalizeAssistantMarkdown(m.content)}
+                      </ReactMarkdown>
                     ) : (
                       m.content
                     )}

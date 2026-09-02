@@ -52,7 +52,8 @@ class TournamentRegistrationApiTests(APITestCase):
         self.other_player = User.objects.create_user(email='other-player@example.com', password='StrongPass123')
 
         self.tournament = Tournament.objects.create(
-            name='Winter Cup', game=self.game, organizer=self.organizer, starts_at=timezone.now(),
+            name='Winter Cup', game=self.game, organizer=self.organizer,
+            starts_at=timezone.now() + timedelta(days=7),
             status=Tournament.Status.APPROVED,
         )
         self.client.force_authenticate(user=self.player)
@@ -363,7 +364,8 @@ class RegistrationCapacityConcurrencyTests(TransactionTestCase):
         self.organizer = Organizer.objects.create(user=organizer_user, company_name='RegConc Co')
         self.tournament = Tournament.objects.create(
             name='Capacity Cup', game=self.game, organizer=self.organizer,
-            status=Tournament.Status.APPROVED, max_participants=1, starts_at=timezone.now(),
+            status=Tournament.Status.APPROVED, max_participants=1,
+            starts_at=timezone.now() + timedelta(days=7),
         )
         self.players = [
             User.objects.create_user(email=f'regconc-p{i}@example.com', password='StrongPass123') for i in range(2)
@@ -422,7 +424,7 @@ class TeamMembershipConcurrencyTests(TransactionTestCase):
         self.organizer = Organizer.objects.create(user=organizer_user, company_name='TeamConc Co')
         self.tournament = Tournament.objects.create(
             name='Team Race Cup', game=self.game, organizer=self.organizer,
-            starts_at=timezone.now(), team_size=2, status=Tournament.Status.APPROVED,
+            starts_at=timezone.now() + timedelta(days=7), team_size=2, status=Tournament.Status.APPROVED,
         )
         self.captain = User.objects.create_user(email='teamconc-captain@example.com', password='StrongPass123')
         self.player = User.objects.create_user(email='teamconc-player@example.com', password='StrongPass123')
@@ -755,7 +757,7 @@ class TeamApiTests(APITestCase):
         self.organizer = Organizer.objects.create(user=self.organizer_user, company_name='Team Co')
         self.tournament = Tournament.objects.create(
             name='Team Cup', game=self.game, organizer=self.organizer,
-            starts_at=timezone.now(), team_size=2, status=Tournament.Status.APPROVED,
+            starts_at=timezone.now() + timedelta(days=7), team_size=2, status=Tournament.Status.APPROVED,
         )
         self.captain = User.objects.create_user(email='captain@example.com', password='StrongPass123')
         self.joiner = User.objects.create_user(email='joiner@example.com', password='StrongPass123')

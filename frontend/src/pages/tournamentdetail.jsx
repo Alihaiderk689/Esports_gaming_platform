@@ -9,6 +9,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DocBadge, DocPreviewDialog } from "@/components/admin/docpreview";
+import { toast } from "@/components/ui/use-toast";
 
 const PLATFORM_SUGGESTIONS = ["Steam", "PlayStation", "Xbox", "Riot Games", "FACEIT", "Battle.net", "Other"];
 
@@ -240,8 +241,12 @@ function TeamPanel({ tournamentId, teamSize, isRegistrationOpen, onRosterChange 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentId]);
 
+  const teamNameWordCount = teamName.trim() ? teamName.trim().split(/\s+/).length : 0;
+  const teamNameError = teamNameWordCount > 10 ? "Team name cannot be more than 10 words." : "";
+
   const createTeam = async (e) => {
     e.preventDefault();
+    if (teamNameError) return;
     setSaving(true);
     setError("");
     try {
@@ -336,18 +341,27 @@ function TeamPanel({ tournamentId, teamSize, isRegistrationOpen, onRosterChange 
           </button>
         </div>
         {mode === "create" ? (
-          <form onSubmit={createTeam} className="flex gap-2">
-            <input
-              required
-              value={teamName}
-              onChange={(e) => setTeamName(e.target.value)}
-              placeholder="Team name"
-              className="flex-1 px-3 py-2 rounded-lg bg-muted/40 border border-border text-sm outline-none focus:border-primary"
-            />
-            <button type="submit" disabled={saving} className="px-3 py-2 rounded-lg text-sm font-heading font-semibold bg-primary text-primary-foreground disabled:opacity-50">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create"}
-            </button>
-          </form>
+          <div>
+            <form onSubmit={createTeam} className="flex gap-2">
+              <input
+                required
+                value={teamName}
+                onChange={(e) => setTeamName(e.target.value)}
+                placeholder="Team name"
+                className={`flex-1 px-3 py-2 rounded-lg bg-muted/40 border text-sm outline-none focus:border-primary ${
+                  teamNameError ? "border-destructive focus:border-destructive" : "border-border"
+                }`}
+              />
+              <button
+                type="submit"
+                disabled={saving || !!teamNameError}
+                className="px-3 py-2 rounded-lg text-sm font-heading font-semibold bg-primary text-primary-foreground disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create"}
+              </button>
+            </form>
+            {teamNameError && <p className="mt-1.5 text-xs text-destructive">{teamNameError}</p>}
+          </div>
         ) : (
           <form onSubmit={joinTeam} className="flex gap-2">
             <input
@@ -679,19 +693,21 @@ function TeamSubstituteForm({ team, onSubbed, onCancel }) {
 
 function TeamRosterRow({ team, isStaff, onChange }) {
   const [locking, setLocking] = useState(false);
-  const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [showSub, setShowSub] = useState(false);
 
   const toggleLock = async () => {
     setLocking(true);
-    setError("");
     try {
       const action = team.is_locked ? "unlock" : "lock";
       const updated = await api.post(`/api/teams/${team.id}/${action}/`, {});
       onChange(updated);
     } catch (e) {
-      setError(e.message || "Could not update the roster lock.");
+      toast({
+        variant: "destructive",
+        title: "Could not update the roster lock",
+        description: e.message || "Please try again.",
+      });
     } finally {
       setLocking(false);
     }
@@ -720,7 +736,6 @@ function TeamRosterRow({ team, isStaff, onChange }) {
           )}
         </div>
       </div>
-      {error && <p className="text-xs text-destructive mt-1">{error}</p>}
       {expanded && (
         <div className="mt-2 pt-2 border-t border-border/40">
           <div className="space-y-1 mb-2">
@@ -1624,7 +1639,7 @@ export default function TournamentDetail() {
           </div>
 
           {tournament.team_size <= 1 ? (
-            tournament.is_registration_open && (
+            tournament.registration_currently_open && (
               myRegistration ? (
                 <div className="flex flex-col items-end gap-2">
                   <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
@@ -1659,7 +1674,7 @@ export default function TournamentDetail() {
             <TeamPanel
               tournamentId={id}
               teamSize={tournament.team_size}
-              isRegistrationOpen={tournament.is_registration_open}
+              isRegistrationOpen={tournament.registration_currently_open}
               onRosterChange={(delta) => setTournament((t) => ({ ...t, teams: t.teams + delta }))}
             />
           )}

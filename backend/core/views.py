@@ -47,6 +47,7 @@ from core.serializers import (
     GoogleLoginSerializer,
     LoginSerializer,
     LogoutSerializer,
+    PlayerDetailSerializer,
     PlayerSerializer,
     PlayerUpdateSerializer,
     ProfileSerializer,
@@ -68,7 +69,7 @@ def _players_queryset(viewer=None):
     # request) — avoids PlayerSerializer.get_is_following running a Follow
     # .exists() query per row, which was 1 extra query per player in every
     # players-list response.
-    queryset = User.objects.filter(is_active=True)
+    queryset = User.objects.filter(is_active=True).select_related('organizer_profile')
     if viewer is not None and viewer.is_authenticated:
         queryset = queryset.annotate(
             is_following=Exists(Follow.objects.filter(follower=viewer, following=OuterRef('pk'))),
@@ -554,7 +555,7 @@ class PlayerDetailView(ProtectedUserDeleteMixin, generics.RetrieveUpdateDestroyA
     def get_serializer_class(self):
         if self.request.method in ('PATCH', 'PUT'):
             return PlayerUpdateSerializer
-        return PlayerSerializer
+        return PlayerDetailSerializer
 
 
 class PlayerMeView(ProtectedUserDeleteMixin, generics.RetrieveUpdateDestroyAPIView):

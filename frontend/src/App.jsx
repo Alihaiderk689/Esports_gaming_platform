@@ -1,6 +1,4 @@
 import { Toaster } from "@/components/ui/toaster";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { queryClientInstance } from "@/lib/query-client";
 import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
 import PageNotFound from "@/lib/pagenotfound";
 import { AppAuthProvider, useAuth } from "@/lib/appauth";
@@ -66,7 +64,6 @@ const AuthenticatedApp = () => {
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route element={<AppLayout />}>
         <Route element={<NotAdminRoute />}>
-          <Route path="/" element={<Landing />} />
           <Route path="/games" element={<Games />} />
           <Route path="/games/:slug" element={<GameDetail />} />
           <Route path="/about" element={<About />} />
@@ -75,11 +72,16 @@ const AuthenticatedApp = () => {
               page already degrades gracefully with no session. */}
           <Route path="/tournaments" element={<Tournaments />} />
           <Route element={<ProtectedRoute />}>
+            {/* Landing ("/") is the authenticated home — an unauthenticated
+                visitor is bounced to /login instead of seeing it. */}
+            <Route path="/" element={<Landing />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/account" element={<AccountSettings />} />
+            {/* Any authenticated non-staff user (player or organizer) can browse
+                and follow other players/organizers — not organizer/admin-only. */}
+            <Route path="/players" element={<Players />} />
+            <Route path="/players/:id" element={<PlayerDetail />} />
             <Route element={<OrganizerOrAdminRoute />}>
-              <Route path="/players" element={<Players />} />
-              <Route path="/players/:id" element={<PlayerDetail />} />
               <Route path="/create" element={<CreateHub />} />
               <Route path="/my-tournaments" element={<MyTournaments />} />
               <Route path="/tournaments/:id/edit" element={<EditTournament />} />
@@ -115,13 +117,11 @@ const AuthenticatedApp = () => {
 function App() {
   return (
     <AppAuthProvider>
-      <QueryClientProvider client={queryClientInstance}>
-        <Router>
-          <ScrollToTop />
-          <AuthenticatedApp />
-        </Router>
-        <Toaster />
-      </QueryClientProvider>
+      <Router>
+        <ScrollToTop />
+        <AuthenticatedApp />
+      </Router>
+      <Toaster />
     </AppAuthProvider>
   );
 }

@@ -527,7 +527,7 @@ class TeamCreateView(APIView):
         tournament = get_object_or_404(Tournament, pk=pk, status=Tournament.Status.APPROVED)
         if tournament.team_size <= 1:
             raise ValidationError({'detail': 'This tournament does not use team registration.'})
-        if not tournament.is_registration_open:
+        if not tournament.registration_currently_open:
             raise ValidationError({'detail': 'Registration is closed for this tournament.'})
 
         serializer = TeamCreateSerializer(data=request.data)
@@ -572,7 +572,7 @@ class TeamJoinView(APIView):
     def post(self, request, pk):
         tournament = get_object_or_404(Tournament, pk=pk, status=Tournament.Status.APPROVED)
 
-        if not tournament.is_registration_open:
+        if not tournament.registration_currently_open:
             raise ValidationError({'detail': 'Registration is closed for this tournament.'})
 
         serializer = TeamJoinSerializer(data=request.data)
@@ -643,10 +643,8 @@ class TeamRegisterView(APIView):
             raise ValidationError({'detail': 'This tournament is not open for registration.'})
         if team.members.count() != tournament.team_size:
             raise ValidationError({'detail': f'Your roster must have exactly {tournament.team_size} member(s) to register.'})
-        if not tournament.is_registration_open:
+        if not tournament.registration_currently_open:
             raise ValidationError({'detail': 'Registration is closed for this tournament.'})
-        if tournament.registration_deadline and timezone.now() > tournament.registration_deadline:
-            raise ValidationError({'detail': 'The registration deadline for this tournament has passed.'})
 
         try:
             # Locks the tournament row so a simultaneous registration can't slip

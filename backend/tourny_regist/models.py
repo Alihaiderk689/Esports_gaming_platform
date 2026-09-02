@@ -1,10 +1,17 @@
+from datetime import timedelta
+
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.utils import timezone
 from django.utils.crypto import get_random_string
 
 from core.storage import CloudinarySignedStorage
 from core.validators import validate_document_file, validate_phone_number
+
+# Fallback used by Tournament.has_ended when the organizer never set an
+# explicit ends_at (it's optional) — see that property for details.
+TOURNAMENT_END_GRACE = timedelta(hours=24)
 
 
 class Tournament(models.Model):
@@ -174,6 +181,34 @@ class Tournament(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def registration_currently_open(self):
+        """Combines the manual is_registration_open flag (cancelled / bracket
+        already generated), an optional explicit registration_deadline, and a
+        hard backstop at starts_at — so an organizer who never set a deadline
+        doesn't leave registration open indefinitely. Every registration entry
+        point should check this instead of re-deriving the same logic."""
+        if not self.is_registration_open:
+            return False
+        now = timezone.now()
+        if self.registration_deadline and now > self.registration_deadline:
+            return False
+        if self.starts_at and now >= self.starts_at:
+            return False
+        return True
+
+    @property
+    def has_ended(self):
+        """True once the tournament is over: ends_at if the organizer set one,
+        else starts_at + a grace period as a fallback (ends_at is optional).
+        Drives discovery-list visibility via TournamentListSerializer.get_phase."""
+        now = timezone.now()
+        if self.ends_at:
+            return now > self.ends_at
+        if self.starts_at:
+            return now > self.starts_at + TOURNAMENT_END_GRACE
+        return False
 
     def current_rule_version(self):
         """The latest published TournamentRuleVersion, or None if the organizer

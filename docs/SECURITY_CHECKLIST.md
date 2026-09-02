@@ -15,7 +15,7 @@ Run through this before every production deploy — not just the first one. Seve
 
 - [ ] `CORS_ORIGINS` is set to the real frontend origin(s) only — not the `localhost:5173` dev default.
 - [x] `CORS_ALLOW_ALL_ORIGINS` is **not** introduced anywhere (it isn't used today; keep it that way). **Regression-tested**: `core/tests.py:SecuritySettingsInvariantTests.test_cors_does_not_allow_all_origins` fails CI if this ever gets set.
-- [x] `CORS_ALLOW_CREDENTIALS` is still `False` (`config/settings.py`) — the frontend authenticates via bearer token, not cookies, so there's nothing legitimate for credentialed CORS to unlock. If a future feature genuinely needs cross-origin cookies, that's a deliberate design change, not a quick flip — think it through rather than just setting it back to `True`. **Regression-tested**: `test_cors_does_not_allow_credentials`.
+- [x] `CORS_ALLOW_CREDENTIALS` is `True` (`config/settings.py`) — deliberate, since the refresh-token httpOnly cookie (see `docs/SECURITY.md#jwt`) needs it to be sent/received cross-site. `CORS_ORIGINS` staying an explicit allow-list (never `CORS_ALLOW_ALL_ORIGINS`) is what keeps this safe — confirm that's still true, don't just check this flag in isolation. **Regression-tested**: `test_cors_allows_credentials_for_the_refresh_cookie`.
 - [ ] `CSRF_TRUSTED_ORIGINS` matches the real frontend origin(s) — relevant to Django admin, not the JWT API (see `docs/SECURITY.md#csrf`).
 
 ## Security headers / CSP

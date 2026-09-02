@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
+import { canCheckIn as canRegistrationCheckIn, TERMINAL_NEGATIVE_STATUSES } from "@/lib/registrationStatus";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DocBadge, DocPreviewDialog } from "@/components/admin/docpreview";
 import { toast } from "@/components/ui/use-toast";
@@ -446,8 +447,7 @@ function RegistrationDetailDialog({ registration, tournament, onClose, onPreview
   }, [registration?.id]);
 
   const hasFee = tournament && Number(tournament.registration_fee) > 0;
-  const canCheckIn = registration && !registration.checked_in
-    && registration.status !== "rejected" && (!hasFee || registration.status === "approved");
+  const canCheckIn = canRegistrationCheckIn(registration, hasFee);
 
   const confirmReject = () => {
     onReview(registration.id, "rejected", rejectReason.trim());
@@ -1200,7 +1200,7 @@ function RegistrationRow({ registration: r, tournament, onOpenDetail, onCheckIn,
                 {checkingIn ? <Loader2 className="w-3 h-3 animate-spin" /> : "Undo"}
               </button>
             </div>
-          ) : r.status === "rejected" || r.status === "cancelled" || r.status === "disqualified" ? (
+          ) : TERMINAL_NEGATIVE_STATUSES.includes(r.status) ? (
             <span className="text-[11px] text-muted-foreground capitalize">{r.status}</span>
           ) : tournament.registration_fee > 0 && r.status !== "approved" ? (
             <span
@@ -1463,7 +1463,6 @@ export default function TournamentDetail() {
     api.get(`/api/tournaments/${id}/brackets/`)
       .then(() => setBracketExists(true))
       .catch(() => setBracketExists(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const handleRegistered = (reg) => {

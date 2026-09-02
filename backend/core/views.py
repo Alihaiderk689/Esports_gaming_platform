@@ -25,14 +25,16 @@ from rest_framework.exceptions import APIException, NotFound, PermissionDenied, 
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
-from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from core.audit import log_action
+from core.cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
 from core.emails import send_password_reset_email, send_verification_email
 from core.models import Dispute, DisputeEvidence, Follow, PendingRegistration
 from core.otp import OtpVerificationError, can_resend, verify_otp
+from core.pagination import StandardResultsPagination
 from core.security_events import log_security_event
 from core.serializers import (
     AdminUserSerializer,
@@ -46,7 +48,6 @@ from core.serializers import (
     ForgotPasswordSerializer,
     GoogleLoginSerializer,
     LoginSerializer,
-    LogoutSerializer,
     PlayerDetailSerializer,
     PlayerSerializer,
     PlayerUpdateSerializer,
@@ -161,6 +162,26 @@ class RegisterView(generics.CreateAPIView):
         )
 
 
+class CookieTokenRefreshView(TokenRefreshView):
+    """Reads the refresh token from the httpOnly esp_refresh cookie
+    (core/cookies.py) instead of the request body, and — since
+    ROTATE_REFRESH_TOKENS=True means the serializer's response includes a
+    new rotated refresh token — writes that new token back into the cookie
+    rather than the response body."""
+
+    def post(self, request, *args, **kwargs):
+        refresh = request.COOKIES.get(REFRESH_COOKIE_NAME)
+        if not refresh:
+            raise InvalidToken('No refresh token cookie found.')
+        serializer = self.get_serializer(data={'refresh': refresh})
+        serializer.is_valid(raise_exception=True)
+        response = Response(serializer.validated_data, status=status.HTTP_200_OK)
+        new_refresh = response.data.pop('refresh', None)
+        if new_refresh:
+            set_refresh_cookie(response, new_refresh)
+        return response
+
+
 class LoginView(TokenObtainPairView):
     serializer_class = LoginSerializer
     throttle_scope = 'login'
@@ -171,6 +192,14 @@ class LoginView(TokenObtainPairView):
     # global floors from DEFAULT_THROTTLE_CLASSES; restated here because
     # setting throttle_classes on a view replaces the default list entirely.
     throttle_classes = [ScopedRateThrottle, LoginEmailRateThrottle, UserRateThrottle, AnonRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            refresh = response.data.pop('refresh', None)
+            if refresh:
+                set_refresh_cookie(response, refresh)
+        return response
 
 
 class GoogleAuthUnavailable(APIException):
@@ -305,25 +334,29 @@ class GoogleLoginView(APIView):
         )
 
         refresh = RefreshToken.for_user(user)
-        return Response({
-            'refresh': str(refresh),
+        response = Response({
             'access': str(refresh.access_token),
             'user': ProfileSerializer(user).data,
         })
+        set_refresh_cookie(response, str(refresh))
+        return response
 
 
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        serializer = LogoutSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            token = RefreshToken(serializer.validated_data['refresh'])
-            token.blacklist()
-        except TokenError:
-            raise ValidationError({'refresh': 'Invalid or expired token.'})
-        return Response(status=status.HTTP_205_RESET_CONTENT)
+        refresh = request.COOKIES.get(REFRESH_COOKIE_NAME)
+        if refresh:
+            try:
+                RefreshToken(refresh).blacklist()
+            except TokenError:
+                # Already invalid/expired/blacklisted — logout still
+                # proceeds and clears the cookie either way.
+                pass
+        response = Response(status=status.HTTP_205_RESET_CONTENT)
+        clear_refresh_cookie(response)
+        return response
 
 
 class LogoutAllSessionsView(APIView):
@@ -341,7 +374,9 @@ class LogoutAllSessionsView(APIView):
     def post(self, request):
         revoke_all_sessions(request.user)
         log_security_event('session.logout_all', request=request)
-        return Response(status=status.HTTP_205_RESET_CONTENT)
+        response = Response(status=status.HTTP_205_RESET_CONTENT)
+        clear_refresh_cookie(response)
+        return response
 
 
 class ForgotPasswordView(APIView):
@@ -615,6 +650,7 @@ class AdminUserListView(generics.ListAPIView):
     queryset = User.objects.select_related('organizer_profile').order_by('-date_joined')
     filter_backends = [filters.SearchFilter]
     search_fields = ['email', 'first_name', 'last_name']
+    pagination_class = StandardResultsPagination
 
 
 class AdminUserDetailView(generics.RetrieveUpdateAPIView):

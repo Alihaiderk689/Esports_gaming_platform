@@ -38,12 +38,16 @@ export default function VerifyEmail() {
 
   const resend = async (e) => {
     e.preventDefault();
+    setError("");
+    setResendSent(false);
     setResending(true);
     try {
       await api.post("/api/auth/resend-verification/", { email: email.trim().toLowerCase() }, { auth: false });
+      setResendSent(true);
+    } catch (err) {
+      setError(err.message || "Couldn't resend the code. Please try again.");
     } finally {
       setResending(false);
-      setResendSent(true);
     }
   };
 

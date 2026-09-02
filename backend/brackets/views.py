@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from brackets.models import Bracket, Match
+from brackets.permissions import IsPublicOrTournamentStakeholder
 from brackets.serializers import (
     BracketSerializer,
     MatchForfeitSerializer,
@@ -49,10 +50,18 @@ _GENERATORS = {
 
 
 class TournamentBracketView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsTournamentStaffOrAdmin]
+    # GET (spectator read) and POST (generation) intentionally use different
+    # object-level rules — see get_permissions().
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [permissions.IsAuthenticated(), IsPublicOrTournamentStakeholder()]
+        return [permissions.IsAuthenticated(), IsTournamentStaffOrAdmin()]
 
     def get(self, request, pk):
         tournament = get_object_or_404(Tournament, pk=pk)
+        self.check_object_permissions(request, tournament)
         bracket = getattr(tournament, 'bracket', None)
         if bracket is None:
             raise NotFound({'detail': 'Bracket has not been generated yet.'})
@@ -135,17 +144,36 @@ class TournamentBracketResetView(APIView):
 
 class TournamentMatchesView(generics.ListAPIView):
     serializer_class = MatchSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsPublicOrTournamentStakeholder]
 
     def get_queryset(self):
         tournament = get_object_or_404(Tournament, pk=self.kwargs['pk'])
+        # check_object_permissions() isn't called automatically for a list
+        # view the way it is for a single-object view — call it explicitly
+        # against the parent tournament (same pattern as
+        # TournamentAnnouncementsView, see docs/SECURITY.md's IDOR audit).
+        self.check_object_permissions(self.request, tournament)
         return Match.objects.filter(tournament=tournament).select_related('player1', 'player2', 'winner')
 
 
 class MatchDetailView(generics.RetrieveAPIView):
     queryset = Match.objects.select_related('player1', 'player2', 'winner', 'tournament')
     serializer_class = MatchSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsPublicOrTournamentStakeholder]
+
+    def get_object(self):
+        # GenericAPIView.get_object() would call check_object_permissions()
+        # against the Match itself — this view's object-level rule is keyed
+        # on the match's Tournament instead (mirrors MatchResultView.patch's
+        # self.check_object_permissions(request, match.tournament)), so the
+        # lookup is replicated here rather than delegated to super(), which
+        # would run the permission check against the wrong object.
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+        match = get_object_or_404(queryset, **filter_kwargs)
+        self.check_object_permissions(self.request, match.tournament)
+        return match
 
 
 class MatchResultView(APIView):

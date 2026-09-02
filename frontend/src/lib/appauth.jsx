@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { api, tokenStorage } from "./api";
+import { api, tokenStorage, refreshToken } from "./api";
 
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
@@ -9,10 +9,18 @@ export function AppAuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const fetchMe = useCallback(async () => {
+    // The access token lives in memory only, so it's gone on every page
+    // reload even for an already-logged-in user — attempt a silent refresh
+    // against the httpOnly refresh cookie before concluding they're logged
+    // out. This is what keeps "stay logged in across a reload" working now
+    // that nothing token-related is in localStorage anymore.
     if (!tokenStorage.get()) {
-      setUser(null);
-      setLoading(false);
-      return;
+      const refreshed = await refreshToken();
+      if (!refreshed) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
     }
     try {
       const me = await api.get("/api/auth/me/");
@@ -30,35 +38,38 @@ export function AppAuthProvider({ children }) {
   }, [fetchMe]);
 
   const login = async (email, password) => {
-    const data = await api.post("/api/auth/login/", { email, password });
-    tokenStorage.set(data.access || data.access_token, data.refresh);
+    const data = await api.post("/api/auth/login/", { email, password }, { withCredentials: true });
+    tokenStorage.set(data.access || data.access_token);
     const me = data.user || (await api.get("/api/auth/me/"));
     setUser(me);
     return me;
   };
 
   const register = async (payload, opts) => {
-    const data = await api.post("/api/auth/register/", payload, opts);
+    const data = await api.post("/api/auth/register/", payload, { ...opts, withCredentials: true });
     if (data.access || data.access_token) {
-      tokenStorage.set(data.access || data.access_token, data.refresh);
+      tokenStorage.set(data.access || data.access_token);
       setUser(data.user || (await api.get("/api/auth/me/").catch(() => null)));
     }
     return data;
   };
 
   const googleLogin = async (idToken, state) => {
-    const data = await api.post("/api/auth/google-login/", { id_token: idToken, state });
-    tokenStorage.set(data.access || data.access_token, data.refresh);
+    const data = await api.post(
+      "/api/auth/google-login/", { id_token: idToken, state }, { withCredentials: true },
+    );
+    tokenStorage.set(data.access || data.access_token);
     setUser(data.user);
     return data.user;
   };
 
   const logout = async () => {
     try {
-      const refresh = tokenStorage.getRefresh();
-      if (refresh) await api.post("/api/auth/logout/", { refresh });
+      // Backend now reads the refresh token from the httpOnly cookie
+      // itself — nothing to send in the body anymore.
+      await api.post("/api/auth/logout/", {}, { withCredentials: true });
     } catch {
-      /* ignore */
+      /* ignore — logout proceeds locally either way */
     }
     tokenStorage.clear();
     setUser(null);
@@ -69,9 +80,12 @@ export function AppAuthProvider({ children }) {
   // not just this browser's — for a user who suspects a device they're not
   // holding right now (a shared computer, a stolen laptop) still has a
   // valid session. This browser's own tokens are cleared the same as a
-  // normal logout since its refresh token is blacklisted too.
+  // normal logout since its refresh token is blacklisted too. Unlike
+  // logout(), a failure here is surfaced rather than swallowed — if the
+  // call didn't succeed, the user's other sessions weren't actually
+  // revoked, and silently redirecting to /login would hide that.
   const logoutAllSessions = async () => {
-    await api.post("/api/auth/logout-all/");
+    await api.post("/api/auth/logout-all/", {}, { withCredentials: true });
     tokenStorage.clear();
     setUser(null);
     window.location.href = "/login";

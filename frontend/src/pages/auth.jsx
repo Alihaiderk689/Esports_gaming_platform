@@ -249,6 +249,7 @@ export default function Auth() {
   const resendOtp = async () => {
     setOtpResending(true);
     setOtpError("");
+    setOtpInfo("");
     try {
       await api.post("/api/auth/resend-verification/", { email: otpEmail }, { auth: false });
       setOtpValue("");
@@ -256,6 +257,8 @@ export default function Auth() {
       setOtpInfo("A new code has been sent — check your inbox.");
       setOtpExpiresAt(Date.now() + OTP_TTL_MS);
       setResendCooldownUntil(Date.now() + OTP_RESEND_COOLDOWN_MS);
+    } catch (err) {
+      setOtpError(err.message || "Couldn't resend the code. Please try again.");
     } finally {
       setOtpResending(false);
     }

@@ -105,6 +105,13 @@ class BracketApiTests(APITestCase):
         self.tournament.refresh_from_db()
         self.assertFalse(self.tournament.is_registration_open)
 
+    def test_generate_group_playoff_malformed_num_groups_returns_400_not_500(self):
+        self._register(self.tournament, self.players)
+        resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/brackets/', {
+            'format': 'group_playoff', 'num_groups': 'not-a-number',
+        })
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_generate_power_of_two_bracket(self):
         self._register(self.tournament, self.players)
         resp = self.client.post(f'/api/tournaments/{self.tournament.pk}/brackets/')
@@ -255,6 +262,77 @@ class BracketApiTests(APITestCase):
         self.client.patch(f'/api/matches/{match.pk}/result/', {'winner': match.player1_id})
         resp = self.client.patch(f'/api/matches/{match.pk}/result/', {'winner': match.player1_id})
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class BracketAuthorizationTests(APITestCase):
+    """GET /brackets/, /matches/, /matches/<pk>/ for a tournament that is
+    NOT (yet) public (approved + published) — only staff/organizer/a
+    registered stakeholder may view it; a genuine outsider (authenticated,
+    but unrelated to this tournament) is blocked. Once the tournament goes
+    public, any authenticated user (including the same outsider) can view
+    it, matching the pre-existing, still-passing BracketApiTests behavior
+    for a registered player."""
+
+    def setUp(self):
+        self.game = Game.objects.create(name='Valorant', genre='FPS')
+        self.organizer_user = User.objects.create_user(email='org2@example.com', password='StrongPass123')
+        self.organizer = Organizer.objects.create(user=self.organizer_user, company_name='Acme Esports 2')
+        self.players = [
+            User.objects.create_user(email=f'auth-player{i}@example.com', password='StrongPass123')
+            for i in range(4)
+        ]
+        self.outsider = User.objects.create_user(email='auth-outsider@example.com', password='StrongPass123')
+        # Default status=PENDING, is_published=False — a non-public tournament.
+        self.tournament = Tournament.objects.create(
+            name='Private Cup', game=self.game, organizer=self.organizer, starts_at=timezone.now(),
+        )
+        for p in self.players:
+            Registration.objects.create(tournament=self.tournament, player=p, checked_in=True)
+        self.client.force_authenticate(user=self.organizer_user)
+        self.client.post(f'/api/tournaments/{self.tournament.pk}/brackets/')
+        self.match = Match.objects.filter(tournament=self.tournament, round_number=1).first()
+
+    def test_outsider_cannot_view_bracket_of_a_non_public_tournament(self):
+        self.client.force_authenticate(user=self.outsider)
+        resp = self.client.get(f'/api/tournaments/{self.tournament.pk}/brackets/')
+        self.assertIn(resp.status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND))
+
+    def test_outsider_cannot_view_matches_of_a_non_public_tournament(self):
+        self.client.force_authenticate(user=self.outsider)
+        resp = self.client.get(f'/api/tournaments/{self.tournament.pk}/matches/')
+        self.assertIn(resp.status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND))
+
+    def test_outsider_cannot_view_match_detail_of_a_non_public_tournament(self):
+        self.client.force_authenticate(user=self.outsider)
+        resp = self.client.get(f'/api/matches/{self.match.pk}/')
+        self.assertIn(resp.status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND))
+
+    def test_anonymous_request_rejected(self):
+        self.client.force_authenticate(user=None)
+        resp = self.client.get(f'/api/tournaments/{self.tournament.pk}/brackets/')
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_outsider_can_view_once_tournament_is_public(self):
+        self.tournament.status = Tournament.Status.APPROVED
+        self.tournament.is_published = True
+        self.tournament.save(update_fields=['status', 'is_published'])
+        self.client.force_authenticate(user=self.outsider)
+        self.assertEqual(
+            self.client.get(f'/api/tournaments/{self.tournament.pk}/brackets/').status_code, status.HTTP_200_OK,
+        )
+        self.assertEqual(
+            self.client.get(f'/api/tournaments/{self.tournament.pk}/matches/').status_code, status.HTTP_200_OK,
+        )
+        self.assertEqual(
+            self.client.get(f'/api/matches/{self.match.pk}/').status_code, status.HTTP_200_OK,
+        )
+
+    def test_registered_player_can_still_view_non_public_tournament(self):
+        # Preserves the exact scenario BracketApiTests already covers.
+        self.client.force_authenticate(user=self.players[0])
+        self.assertEqual(
+            self.client.get(f'/api/tournaments/{self.tournament.pk}/brackets/').status_code, status.HTTP_200_OK,
+        )
 
 
 class BracketTestMixin:

@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from core.audit import log_action
 from core.models import AdminReviewRequest, AuditLog, Dispute
+from core.pagination import StandardResultsPagination
 from core.serializers import DisputeCreateSerializer, DisputeSerializer
 from tourny_regist import lifecycle
 from tourny_regist.emails import send_announcement_emails
@@ -399,6 +400,11 @@ class TournamentSeedingView(APIView):
             for entry in seeds:
                 reg_id = entry.get('registration_id')
                 seed_value = entry.get('seed')
+                try:
+                    reg_id = int(reg_id)
+                    seed_value = int(seed_value)
+                except (TypeError, ValueError):
+                    raise ValidationError({'seeds': 'Each entry must have an integer registration_id and seed.'})
                 updated = Registration.objects.filter(tournament=tournament, pk=reg_id).update(seed=seed_value)
                 if not updated:
                     raise ValidationError({'detail': f'Registration {reg_id} was not found in this tournament.'})
@@ -414,6 +420,7 @@ class AdminTournamentListView(generics.ListAPIView):
     serializer_class = AdminTournamentSerializer
     permission_classes = [permissions.IsAdminUser]
     queryset = Tournament.objects.select_related('game', 'organizer', 'created_by').order_by('-created_at')
+    pagination_class = StandardResultsPagination
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -695,8 +702,11 @@ class TeamSubstituteView(APIView):
             raise ValidationError({'detail': 'outgoing_player_id and incoming_player_id are both required.'})
 
         User = get_user_model()
-        outgoing_player = get_object_or_404(User, pk=outgoing_id)
-        incoming_player = get_object_or_404(User, pk=incoming_id)
+        try:
+            outgoing_player = get_object_or_404(User, pk=outgoing_id)
+            incoming_player = get_object_or_404(User, pk=incoming_id)
+        except (TypeError, ValueError):
+            raise ValidationError({'detail': 'Invalid player id.'})
         team = lifecycle.substitute_team_member(team, request.user, outgoing_player, incoming_player, reason)
         return Response(TeamSerializer(team).data)
 

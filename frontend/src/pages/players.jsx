@@ -3,21 +3,15 @@ import { Link } from "react-router-dom";
 import { Search, UserPlus, UserMinus, Loader2, Users as UsersIcon } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
+import { initials, displayName } from "@/lib/playerDisplay";
+import RoleBadge from "@/components/players/rolebadge";
+import { toast } from "@/components/ui/use-toast";
 
 const TABS = [
   { key: "all", label: "All Players" },
   { key: "top", label: "Top Players" },
   { key: "following", label: "Following" },
 ];
-
-function initials(p) {
-  const name = [p.first_name, p.last_name].filter(Boolean).join(" ") || p.email;
-  return name.charAt(0).toUpperCase();
-}
-
-function displayName(p) {
-  return [p.first_name, p.last_name].filter(Boolean).join(" ") || p.email;
-}
 
 export default function Players() {
   const { user: me } = useAuth();
@@ -51,7 +45,6 @@ export default function Players() {
 
   const toggleFollow = async (p) => {
     setFollowingId(p.id);
-    setError("");
     try {
       if (p.is_following) {
         await api.delete(`/api/players/${p.id}/follow/`);
@@ -64,7 +57,11 @@ export default function Players() {
           : list.map((x) => (x.id === p.id ? { ...x, is_following: !x.is_following } : x))
       );
     } catch (e) {
-      setError(e.message || "Could not update follow status.");
+      toast({
+        variant: "destructive",
+        title: "Could not update follow status",
+        description: e.message || "Please try again.",
+      });
     } finally {
       setFollowingId(null);
     }
@@ -128,9 +125,12 @@ export default function Players() {
                 </div>
               </Link>
               <div className="flex-1 min-w-0">
-                <Link to={`/players/${p.id}`} className="font-heading font-bold text-sm hover:text-primary truncate block">
-                  {displayName(p)}
-                </Link>
+                <div className="flex items-center gap-2">
+                  <Link to={`/players/${p.id}`} className="font-heading font-bold text-sm hover:text-primary truncate">
+                    {displayName(p)}
+                  </Link>
+                  <RoleBadge role={p.role} />
+                </div>
                 <p className="text-xs text-muted-foreground">{p.followers_count} followers</p>
               </div>
               {me?.id !== p.id && (

@@ -3,6 +3,7 @@ import { Search, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/appauth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "@/components/ui/use-toast";
 
 function Toggle({ on, onClick, disabled }) {
   return (
@@ -114,13 +115,16 @@ export default function AdminUsers() {
 
   const toggle = async (u, field) => {
     setSavingId(u.id);
-    setError("");
     try {
       const updated = await api.patch(`/api/admin/users/${u.id}/`, { [field]: !u[field] });
       setUsers((list) => list.map((x) => (x.id === u.id ? updated : x)));
       setDetailUser((d) => (d && d.id === u.id ? updated : d));
     } catch (e) {
-      setError(e.message || "Could not update user.");
+      toast({
+        variant: "destructive",
+        title: "Could not update user",
+        description: e.message || "Please try again.",
+      });
     } finally {
       setSavingId(null);
     }

@@ -15,7 +15,7 @@ cloudinary==1.45.0
 coloredlogs==15.0.1
 cryptography==49.0.0
 distro==1.9.0
-Django==4.2.30
+Django==6.1
 django-cors-headers==4.9.0
 django-environ==0.14.0
 djangorestframework==3.16.1

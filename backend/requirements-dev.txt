@@ -7,7 +7,7 @@
 # endpoint (see evaluate_rag.py) instead of langchain-groq, which pins
 # groq<1.0 and would downgrade the groq==1.0.0 pinned in requirements.txt.
 -r requirements.txt
-ragas==0.4.3
+ragas==0.4.4
 langchain-openai==0.3.35
 langchain-huggingface==0.3.1
 datasets==4.5.0
